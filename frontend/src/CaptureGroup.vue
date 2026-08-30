@@ -7,7 +7,7 @@ const props = defineProps<{ captures: CaptureMedia[] }>()
 const players = ref<Array<InstanceType<typeof CapturePlayer>>>([])
 const playing = ref(false)
 const playbackError = ref('')
-let syncFrame = 0
+let syncTimer: number | undefined
 
 function setPlayer(player: unknown, index: number): void {
   if (player) players.value[index] = player as InstanceType<typeof CapturePlayer>
@@ -16,7 +16,7 @@ function setPlayer(player: unknown, index: number): void {
 async function togglePlayback(): Promise<void> {
   playbackError.value = ''
   if (playing.value) {
-    cancelAnimationFrame(syncFrame)
+    window.clearTimeout(syncTimer)
     players.value.forEach((player) => player.pause())
     playing.value = false
     return
@@ -37,10 +37,10 @@ function synchronizePlayers(): void {
   const masterIndex = Math.max(0, props.captures.findIndex((capture) => capture.role === 'main_camera'))
   const masterTime = players.value[masterIndex]?.logicalTime() ?? players.value[0]?.logicalTime() ?? 0
   players.value.forEach((player, index) => { if (index !== masterIndex) player.synchronizeTo(masterTime) })
-  syncFrame = requestAnimationFrame(synchronizePlayers)
+  syncTimer = window.setTimeout(synchronizePlayers, 250)
 }
 
-onBeforeUnmount(() => cancelAnimationFrame(syncFrame))
+onBeforeUnmount(() => window.clearTimeout(syncTimer))
 
 function formattedTime(): string {
   const createdAt = props.captures.find((capture) => capture.created_at)?.created_at

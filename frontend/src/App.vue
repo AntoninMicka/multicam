@@ -473,7 +473,7 @@ function recordTelemetry(event: TelemetryEvent['event'], details?: Record<string
     },
     position: latestPosition ? { ...latestPosition } : null,
     orientation: latestOrientation ? { ...latestOrientation } : null,
-    ...(details ? { details } : {}),
+    ...(details ? { details: { ...details } } : {}),
   }
   if (captureId) {
     const write = appendTelemetryEvent(captureId, telemetryIndex, sample).catch((reason) => {
@@ -593,7 +593,10 @@ async function startLocalRecording(requestDetails: Record<string, unknown> = {})
     mediaRecorder.start(1000)
     recordingStartedAt = performance.now()
     recordTelemetry('recording_started')
-    telemetryTimer = window.setInterval(() => recordTelemetry('clock_sample', deviceId.value ? clockMetrics.value[deviceId.value] : undefined), 1000)
+    telemetryTimer = window.setInterval(() => {
+      const metrics = deviceId.value ? clockMetrics.value[deviceId.value] : undefined
+      recordTelemetry('clock_sample', metrics ? { ...metrics } : undefined)
+    }, 1000)
     recording.value = true
     await acquireWakeLock()
     return true

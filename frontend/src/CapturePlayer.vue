@@ -9,6 +9,7 @@ const currentTimeMs = ref(0)
 const loadingError = ref('')
 const mediaStatus = ref<'loading' | 'ready' | 'playing' | 'paused' | 'ended' | 'error'>('loading')
 const mediaError = ref('')
+const alignedToMarker = ref(false)
 
 onMounted(async () => {
   if (!props.capture.telemetry_url) {
@@ -47,7 +48,9 @@ function number(value: number | null | undefined, digits = 2): string {
 
 async function playFromStart(): Promise<void> {
   if (!video.value) return
-  video.value.currentTime = syncOffsetSeconds.value
+  video.value.playbackRate = 1
+  alignedToMarker.value = canSeekTo(syncOffsetSeconds.value)
+  if (alignedToMarker.value) video.value.currentTime = syncOffsetSeconds.value
   await video.value.play()
 }
 
@@ -55,13 +58,25 @@ function pause(): void {
   video.value?.pause()
 }
 
-function logicalTime(): number { return (video.value?.currentTime ?? 0) - syncOffsetSeconds.value }
+function canSeekTo(time: number): boolean {
+  if (!video.value || !Number.isFinite(video.value.duration)) return false
+  for (let index = 0; index < video.value.seekable.length; index += 1) {
+    if (time >= video.value.seekable.start(index) && time <= video.value.seekable.end(index)) return true
+  }
+  return false
+}
+
+function logicalTime(): number { return (video.value?.currentTime ?? 0) - (alignedToMarker.value ? syncOffsetSeconds.value : 0) }
 function synchronizeTo(logicalMasterTime: number): void {
   if (!video.value || !Number.isFinite(logicalMasterTime)) return
-  const target = logicalMasterTime + syncOffsetSeconds.value
+  if (video.value.paused || video.value.seeking || video.value.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
+  const target = logicalMasterTime + (alignedToMarker.value ? syncOffsetSeconds.value : 0)
   const drift = video.value.currentTime - target
-  if (Math.abs(drift) > 0.12) video.value.currentTime = target
-  video.value.playbackRate = Math.abs(drift) > 0.04 ? (drift > 0 ? 0.97 : 1.03) : 1
+  if (Math.abs(drift) > 0.35 && canSeekTo(target)) {
+    video.value.currentTime = target
+    return
+  }
+  video.value.playbackRate = Math.abs(drift) > 0.06 ? (drift > 0 ? 0.97 : 1.03) : 1
 }
 
 function describeMediaError(): void {
