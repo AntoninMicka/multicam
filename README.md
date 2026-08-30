@@ -66,6 +66,8 @@ Režisérský pult i kamerový klient jsou součástí stejné PWA na `http://lo
 
 V sandboxovém režimu existuje vždy jedna aktuální relace, kterou klienti vyhledají automaticky. Není proto nutné opisovat její ID. Zařízení si při připojení zvolí roli hlavní, top-over nebo vedlejší kamery; vedlejších kamer může být libovolný počet. Režisér může hlavní kameře přes WebSocket poslat povel k celoobrazovkové světelné klapce; stejnou klapku lze na hlavní kameře otestovat lokálně.
 
+Spuštění a zastavení záznamu lze ovládat z režisérského pultu i z hlavní kamery. Povel se přenese na všechny připojené kamery. Aktuální prototyp drží bloky záznamu v paměti prohlížeče a po zastavení nabídne soubor ke stažení; bezpečné ukládání po blocích do IndexedDB patří do následující fáze.
+
 REST API dokumentace je za běhu dostupná na `http://localhost:8000/docs`. Manifest relace a časové události mají verzovaná schémata v adresáři [`schemas`](schemas).
 
 ## Aktuální stav

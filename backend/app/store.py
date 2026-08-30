@@ -1,7 +1,7 @@
 import asyncio
 from uuid import UUID, uuid4
 
-from .models import Device, DeviceRegistration, Session, SessionCreate, utc_now
+from .models import Device, DeviceRegistration, DeviceState, Session, SessionCreate, SessionState, utc_now
 
 
 class SessionNotFoundError(KeyError):
@@ -59,6 +59,18 @@ class SessionStore:
             if not self._sessions:
                 raise SessionNotFoundError("current")
             session = next(reversed(self._sessions.values()))
+            return session.model_copy(deep=True)
+
+    async def set_state(self, session_id: UUID, state: SessionState) -> Session:
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                raise SessionNotFoundError(session_id)
+            session.state = state
+            device_state = DeviceState.RECORDING if state == SessionState.RECORDING else DeviceState.STORED
+            for device in session.devices.values():
+                if device.connected:
+                    device.state = device_state
             return session.model_copy(deep=True)
 
 

@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import { createSession, getCurrentSession, getSession, registerDevice, sessionSocket } from './api';
 const role = ref(null);
 const session = ref(null);
@@ -8,8 +8,15 @@ const deviceId = ref(localStorage.getItem('multicam.deviceId') ?? '');
 const error = ref('');
 const busy = ref(false);
 const flashVisible = ref(false);
+const preview = ref(null);
+const recording = ref(false);
+const recordingUrl = ref('');
+const cameraReady = ref(false);
 let socket = null;
 let flashTimer;
+let mediaStream = null;
+let mediaRecorder = null;
+let recordedChunks = [];
 const devices = computed(() => Object.values(session.value?.devices ?? {}));
 async function readCapabilities() {
     const estimate = await navigator.storage?.estimate?.().catch(() => undefined);
@@ -53,6 +60,10 @@ function connectSocket(id, cameraId) {
             session.value = message.payload;
         if (message.type === 'clap.trigger' && role.value === 'main_camera')
             flashClap();
+        if (message.type === 'recording.start' && role.value !== 'director')
+            startLocalRecording();
+        if (message.type === 'recording.stop' && role.value !== 'director')
+            stopLocalRecording();
     };
     socket.onerror = () => (error.value = 'Spojení se serverem bylo přerušeno.');
 }
@@ -84,6 +95,10 @@ async function joinCamera() {
         localStorage.setItem('multicam.deviceId', device.device_id);
         session.value = await getSession(activeSession.session_id);
         connectSocket(activeSession.session_id, device.device_id);
+        await nextTick();
+        await prepareCamera();
+        if (activeSession.state === 'recording')
+            startLocalRecording();
     }
     catch (reason) {
         error.value = reason instanceof Error ? reason.message : 'K relaci se nelze připojit.';
@@ -99,6 +114,59 @@ function triggerClap() {
     }
     socket.send(JSON.stringify({ type: 'clap.trigger', payload: { requested_at: new Date().toISOString() } }));
 }
+function sendRecordingCommand(type) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        error.value = 'Řídicí kanál není připojený.';
+        return;
+    }
+    socket.send(JSON.stringify({ type, payload: { requested_at: new Date().toISOString() } }));
+}
+async function prepareCamera() {
+    try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' } },
+            audio: true,
+        });
+        if (preview.value)
+            preview.value.srcObject = mediaStream;
+        cameraReady.value = true;
+    }
+    catch {
+        error.value = 'Kamera nebo mikrofon nejsou dostupné. Zkontrolujte oprávnění a HTTPS.';
+    }
+}
+function startLocalRecording() {
+    if (!mediaStream || recording.value)
+        return;
+    try {
+        const preferredTypes = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
+        const mimeType = preferredTypes.find((type) => MediaRecorder.isTypeSupported(type));
+        recordedChunks = [];
+        if (recordingUrl.value)
+            URL.revokeObjectURL(recordingUrl.value);
+        recordingUrl.value = '';
+        mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined);
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size)
+                recordedChunks.push(event.data);
+        };
+        mediaRecorder.onstop = () => {
+            const blob = new Blob(recordedChunks, { type: mediaRecorder?.mimeType || 'video/webm' });
+            recordingUrl.value = URL.createObjectURL(blob);
+        };
+        mediaRecorder.start(1000);
+        recording.value = true;
+    }
+    catch {
+        error.value = 'Záznam se na tomto zařízení nepodařilo spustit.';
+    }
+}
+function stopLocalRecording() {
+    if (!mediaRecorder || mediaRecorder.state === 'inactive')
+        return;
+    mediaRecorder.stop();
+    recording.value = false;
+}
 function flashClap() {
     window.clearTimeout(flashTimer);
     flashVisible.value = true;
@@ -113,6 +181,10 @@ function roleLabel(value) {
 }
 onBeforeUnmount(() => {
     socket?.close();
+    stopLocalRecording();
+    mediaStream?.getTracks().forEach((track) => track.stop());
+    if (recordingUrl.value)
+        URL.revokeObjectURL(recordingUrl.value);
     window.clearTimeout(flashTimer);
 });
 const __VLS_ctx = {
@@ -248,6 +320,47 @@ else {
     if (__VLS_ctx.role === 'director') {
         __VLS_asFunctionalElement1(__VLS_intrinsics.h3, __VLS_intrinsics.h3)({});
         (__VLS_ctx.devices.length);
+        __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+            ...{ class: "record-controls" },
+        });
+        /** @type {__VLS_StyleScopedClasses['record-controls']} */ ;
+        if (__VLS_ctx.session.state !== 'recording') {
+            __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+                ...{ onClick: (...[$event]) => {
+                        if (!!(!__VLS_ctx.role))
+                            throw 0;
+                        if (!!(!__VLS_ctx.session))
+                            throw 0;
+                        if (!(__VLS_ctx.role === 'director'))
+                            throw 0;
+                        if (!(__VLS_ctx.session.state !== 'recording'))
+                            throw 0;
+                        return (__VLS_ctx.sendRecordingCommand('recording.start'));
+                        // @ts-ignore
+                        [role, role, role, role, session, session, session, sessionName, startDirector, busy, busy, roleLabel, roleLabel, deviceName, deviceName, joinCamera, devices, sendRecordingCommand,];
+                    } },
+                disabled: (!__VLS_ctx.devices.length),
+            });
+        }
+        else {
+            __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+                ...{ onClick: (...[$event]) => {
+                        if (!!(!__VLS_ctx.role))
+                            throw 0;
+                        if (!!(!__VLS_ctx.session))
+                            throw 0;
+                        if (!(__VLS_ctx.role === 'director'))
+                            throw 0;
+                        if (!!(__VLS_ctx.session.state !== 'recording'))
+                            throw 0;
+                        return (__VLS_ctx.sendRecordingCommand('recording.stop'));
+                        // @ts-ignore
+                        [devices, sendRecordingCommand,];
+                    } },
+                ...{ class: "stop" },
+            });
+            /** @type {__VLS_StyleScopedClasses['stop']} */ ;
+        }
         __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
             ...{ onClick: (__VLS_ctx.triggerClap) },
             ...{ class: "clap-button" },
@@ -283,10 +396,18 @@ else {
             /** @type {__VLS_StyleScopedClasses['dot']} */ ;
             (device.connected ? device.state : 'odpojeno');
             // @ts-ignore
-            [role, role, role, role, session, session, sessionName, startDirector, busy, busy, roleLabel, roleLabel, roleLabel, deviceName, deviceName, joinCamera, devices, devices, devices, devices, triggerClap, formatBytes, permissionLabel, permissionLabel,];
+            [roleLabel, devices, devices, devices, triggerClap, formatBytes, permissionLabel, permissionLabel,];
         }
     }
     else {
+        __VLS_asFunctionalElement1(__VLS_intrinsics.video, __VLS_intrinsics.video)({
+            ref: "preview",
+            ...{ class: "preview" },
+            autoplay: true,
+            muted: true,
+            playsinline: true,
+        });
+        /** @type {__VLS_StyleScopedClasses['preview']} */ ;
         __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
             ...{ class: "ready" },
         });
@@ -297,11 +418,72 @@ else {
         __VLS_asFunctionalElement1(__VLS_intrinsics.small, __VLS_intrinsics.small)({});
         (__VLS_ctx.deviceName);
         if (__VLS_ctx.role === 'main_camera') {
+            __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+                ...{ class: "record-controls" },
+            });
+            /** @type {__VLS_StyleScopedClasses['record-controls']} */ ;
+            if (__VLS_ctx.session.state !== 'recording') {
+                __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+                    ...{ onClick: (...[$event]) => {
+                            if (!!(!__VLS_ctx.role))
+                                throw 0;
+                            if (!!(!__VLS_ctx.session))
+                                throw 0;
+                            if (!!(__VLS_ctx.role === 'director'))
+                                throw 0;
+                            if (!(__VLS_ctx.role === 'main_camera'))
+                                throw 0;
+                            if (!(__VLS_ctx.session.state !== 'recording'))
+                                throw 0;
+                            return (__VLS_ctx.sendRecordingCommand('recording.start'));
+                            // @ts-ignore
+                            [role, session, deviceName, sendRecordingCommand,];
+                        } },
+                    disabled: (!__VLS_ctx.cameraReady),
+                });
+            }
+            else {
+                __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+                    ...{ onClick: (...[$event]) => {
+                            if (!!(!__VLS_ctx.role))
+                                throw 0;
+                            if (!!(!__VLS_ctx.session))
+                                throw 0;
+                            if (!!(__VLS_ctx.role === 'director'))
+                                throw 0;
+                            if (!(__VLS_ctx.role === 'main_camera'))
+                                throw 0;
+                            if (!!(__VLS_ctx.session.state !== 'recording'))
+                                throw 0;
+                            return (__VLS_ctx.sendRecordingCommand('recording.stop'));
+                            // @ts-ignore
+                            [sendRecordingCommand, cameraReady,];
+                        } },
+                    ...{ class: "stop" },
+                });
+                /** @type {__VLS_StyleScopedClasses['stop']} */ ;
+            }
+        }
+        else if (__VLS_ctx.recording) {
+            __VLS_asFunctionalElement1(__VLS_intrinsics.p, __VLS_intrinsics.p)({
+                ...{ class: "recording-indicator" },
+            });
+            /** @type {__VLS_StyleScopedClasses['recording-indicator']} */ ;
+        }
+        if (__VLS_ctx.role === 'main_camera') {
             __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
                 ...{ onClick: (__VLS_ctx.flashClap) },
                 ...{ class: "clap-button" },
             });
             /** @type {__VLS_StyleScopedClasses['clap-button']} */ ;
+        }
+        if (__VLS_ctx.recordingUrl) {
+            __VLS_asFunctionalElement1(__VLS_intrinsics.a, __VLS_intrinsics.a)({
+                ...{ class: "download" },
+                href: (__VLS_ctx.recordingUrl),
+                download: (`${__VLS_ctx.role}-${Date.now()}.webm`),
+            });
+            /** @type {__VLS_StyleScopedClasses['download']} */ ;
         }
     }
 }
@@ -320,6 +502,6 @@ if (__VLS_ctx.flashVisible) {
     /** @type {__VLS_StyleScopedClasses['flash']} */ ;
 }
 // @ts-ignore
-[role, deviceName, flashClap, error, error, flashVisible,];
+[role, role, recording, flashClap, recordingUrl, recordingUrl, error, error, flashVisible,];
 const __VLS_export = (await import('vue')).defineComponent({});
 export default {};

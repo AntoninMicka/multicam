@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { createSession, getCurrentSession, getSession, registerDevice, sessionSocket, type DeviceCapabilities } from './api'
 import type { Session } from './types'
 
@@ -12,8 +12,15 @@ const deviceId = ref(localStorage.getItem('multicam.deviceId') ?? '')
 const error = ref('')
 const busy = ref(false)
 const flashVisible = ref(false)
+const preview = ref<HTMLVideoElement | null>(null)
+const recording = ref(false)
+const recordingUrl = ref('')
+const cameraReady = ref(false)
 let socket: WebSocket | null = null
 let flashTimer: number | undefined
+let mediaStream: MediaStream | null = null
+let mediaRecorder: MediaRecorder | null = null
+let recordedChunks: Blob[] = []
 
 const devices = computed(() => Object.values(session.value?.devices ?? {}))
 
@@ -56,6 +63,8 @@ function connectSocket(id: string, cameraId?: string) {
     const message = JSON.parse(event.data)
     if (message.type === 'session.snapshot' || message.type === 'session.updated') session.value = message.payload
     if (message.type === 'clap.trigger' && role.value === 'main_camera') flashClap()
+    if (message.type === 'recording.start' && role.value !== 'director') startLocalRecording()
+    if (message.type === 'recording.stop' && role.value !== 'director') stopLocalRecording()
   }
   socket.onerror = () => (error.value = 'Spojení se serverem bylo přerušeno.')
 }
@@ -87,6 +96,9 @@ async function joinCamera() {
     localStorage.setItem('multicam.deviceId', device.device_id)
     session.value = await getSession(activeSession.session_id)
     connectSocket(activeSession.session_id, device.device_id)
+    await nextTick()
+    await prepareCamera()
+    if (activeSession.state === 'recording') startLocalRecording()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'K relaci se nelze připojit.'
   } finally {
@@ -100,6 +112,56 @@ function triggerClap() {
     return
   }
   socket.send(JSON.stringify({ type: 'clap.trigger', payload: { requested_at: new Date().toISOString() } }))
+}
+
+function sendRecordingCommand(type: 'recording.start' | 'recording.stop') {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    error.value = 'Řídicí kanál není připojený.'
+    return
+  }
+  socket.send(JSON.stringify({ type, payload: { requested_at: new Date().toISOString() } }))
+}
+
+async function prepareCamera() {
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: true,
+    })
+    if (preview.value) preview.value.srcObject = mediaStream
+    cameraReady.value = true
+  } catch {
+    error.value = 'Kamera nebo mikrofon nejsou dostupné. Zkontrolujte oprávnění a HTTPS.'
+  }
+}
+
+function startLocalRecording() {
+  if (!mediaStream || recording.value) return
+  try {
+    const preferredTypes = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
+    const mimeType = preferredTypes.find((type) => MediaRecorder.isTypeSupported(type))
+    recordedChunks = []
+    if (recordingUrl.value) URL.revokeObjectURL(recordingUrl.value)
+    recordingUrl.value = ''
+    mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined)
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size) recordedChunks.push(event.data)
+    }
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recordedChunks, { type: mediaRecorder?.mimeType || 'video/webm' })
+      recordingUrl.value = URL.createObjectURL(blob)
+    }
+    mediaRecorder.start(1000)
+    recording.value = true
+  } catch {
+    error.value = 'Záznam se na tomto zařízení nepodařilo spustit.'
+  }
+}
+
+function stopLocalRecording() {
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') return
+  mediaRecorder.stop()
+  recording.value = false
 }
 
 function flashClap() {
@@ -116,6 +178,9 @@ function roleLabel(value: Role): string {
 
 onBeforeUnmount(() => {
   socket?.close()
+  stopLocalRecording()
+  mediaStream?.getTracks().forEach((track) => track.stop())
+  if (recordingUrl.value) URL.revokeObjectURL(recordingUrl.value)
   window.clearTimeout(flashTimer)
 })
 </script>
@@ -152,6 +217,10 @@ onBeforeUnmount(() => {
 
       <template v-if="role === 'director'">
         <h3>Zařízení ({{ devices.length }})</h3>
+        <div class="record-controls">
+          <button v-if="session.state !== 'recording'" :disabled="!devices.length" @click="sendRecordingCommand('recording.start')">● Spustit záznam</button>
+          <button v-else class="stop" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
+        </div>
         <button class="clap-button" :disabled="!devices.some(device => device.role === 'main_camera' && device.connected)" @click="triggerClap">Spustit světelnou klapku</button>
         <p v-if="!devices.length" class="muted">Čekám na připojení prvního telefonu…</p>
         <article v-for="device in devices" :key="device.device_id" class="device">
@@ -160,8 +229,15 @@ onBeforeUnmount(() => {
         </article>
       </template>
       <template v-else>
+        <video ref="preview" class="preview" autoplay muted playsinline></video>
         <div class="ready"><span>✓</span><div><strong>Zařízení je připravené</strong><small>{{ deviceName }}</small></div></div>
+        <div v-if="role === 'main_camera'" class="record-controls">
+          <button v-if="session.state !== 'recording'" :disabled="!cameraReady" @click="sendRecordingCommand('recording.start')">● Spustit záznam</button>
+          <button v-else class="stop" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
+        </div>
+        <p v-else-if="recording" class="recording-indicator">● Probíhá záznam</p>
         <button v-if="role === 'main_camera'" class="clap-button" @click="flashClap">Otestovat světelnou klapku</button>
+        <a v-if="recordingUrl" class="download" :href="recordingUrl" :download="`${role}-${Date.now()}.webm`">Stáhnout poslední záznam</a>
       </template>
     </section>
     <p v-if="error" class="error">{{ error }}</p>

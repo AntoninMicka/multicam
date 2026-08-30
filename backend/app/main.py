@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, stat
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .models import Device, DeviceRegistration, Session, SessionCreate, SocketMessage
+from .models import Device, DeviceRegistration, Session, SessionCreate, SessionState, SocketMessage
 from .store import SessionNotFoundError, store
 from .websocket import connections
 
@@ -72,6 +72,12 @@ async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID
     try:
         while True:
             message = SocketMessage.model_validate(await websocket.receive_json())
+            if message.type == "recording.start":
+                session = await store.set_state(session_id, SessionState.RECORDING)
+                await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
+            elif message.type == "recording.stop":
+                session = await store.set_state(session_id, SessionState.STOPPED)
+                await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
             await connections.broadcast(session_id, message.model_dump(mode="json"))
     except WebSocketDisconnect:
         connections.disconnect(session_id, websocket)
