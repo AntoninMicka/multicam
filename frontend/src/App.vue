@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   createSession,
+  analyzeSessionClaps,
   getCurrentSession,
   getSessionReport,
   getSession,
@@ -59,6 +60,8 @@ const sessionMedia = ref<CaptureMedia[]>([])
 const recordingStarting = ref(false)
 const recordingFinalizing = ref(false)
 const uploadingCaptureId = ref<string | null>(null)
+const analyzingClaps = ref(false)
+const clapAnalysisMessage = ref('')
 type AckStatus = 'pending' | 'ready' | 'started' | 'stopped' | 'error' | 'timeout'
 interface ControlAck { status: AckStatus; detail?: string }
 const controlAcks = ref<Record<string, ControlAck>>({})
@@ -333,6 +336,24 @@ async function downloadSessionReport(): Promise<void> {
     URL.revokeObjectURL(url)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Report relace nelze vytvořit.'
+  }
+}
+
+async function analyzeClaps(): Promise<void> {
+  if (!session.value || analyzingClaps.value) return
+  analyzingClaps.value = true
+  clapAnalysisMessage.value = ''
+  try {
+    const result = await analyzeSessionClaps(session.value.session_id)
+    const values = Object.values(result.captures)
+    const detected = values.filter((item) => item.status === 'detected').length
+    const uncertain = values.filter((item) => item.status === 'low_confidence').length
+    clapAnalysisMessage.value = `Klapka nalezena v ${detected}/${values.length} videích${uncertain ? `, nejistá v ${uncertain}` : ''}.`
+    await loadSessionMedia()
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'Analýzu klapky nelze dokončit.'
+  } finally {
+    analyzingClaps.value = false
   }
 }
 
@@ -829,7 +850,8 @@ onBeforeUnmount(() => {
           <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small><small v-if="clockMetrics[device.device_id]">Hodiny: offset {{ clockMetrics[device.device_id].offset_ms.toFixed(1) }} ms · RTT {{ clockMetrics[device.device_id].rtt_ms.toFixed(1) }} ms</small><small v-if="deviceUploadStatus[device.device_id]">Přenos: {{ formatSpeed(deviceUploadStatus[device.device_id].speed_bps) }} · zbývá {{ formatEta(deviceUploadStatus[device.device_id].eta_seconds) }} · opakování {{ deviceUploadStatus[device.device_id].retries }}</small><small v-if="deviceUploadStatus[device.device_id]?.error" class="ack-error">{{ deviceUploadStatus[device.device_id].error }}</small><small v-if="controlAcks[device.device_id]" :class="{ 'ack-error': ['error', 'timeout'].includes(controlAcks[device.device_id].status) }">{{ ackLabel(controlAcks[device.device_id]) }}</small></div>
           <span :class="['dot', { offline: !device.connected || deviceUploadStatus[device.device_id]?.status === 'retrying' }]">{{ !device.connected ? 'odpojeno' : deviceUploadStatus[device.device_id] ? `${deviceUploadStatus[device.device_id].status === 'retrying' ? 'čeká na retry' : deviceUploadStatus[device.device_id].status === 'verified' ? 'ověřeno' : 'přenos'} ${deviceUploadStatus[device.device_id].percent} %` : device.state }}</span>
         </article>
-        <div class="media-heading"><h3>Záznamy ({{ sessionMedia.length }})</h3><div class="heading-actions"><button class="small secondary" @click="downloadSessionReport">Stáhnout report</button><button class="small" @click="loadSessionMedia">Obnovit</button></div></div>
+        <div class="media-heading"><h3>Záznamy ({{ sessionMedia.length }})</h3><div class="heading-actions"><button class="small secondary" :disabled="analyzingClaps || !sessionMedia.length" @click="analyzeClaps">{{ analyzingClaps ? 'Analyzuji…' : 'Najít klapky' }}</button><button class="small secondary" @click="downloadSessionReport">Stáhnout report</button><button class="small" @click="loadSessionMedia">Obnovit</button></div></div>
+        <p v-if="clapAnalysisMessage" class="muted">{{ clapAnalysisMessage }}</p>
         <p v-if="!sessionMedia.length" class="muted">Relace zatím nemá ověřené záznamy.</p>
         <div v-else class="take-list">
           <CaptureGroup v-for="group in captureGroups" :key="group.takeId" :captures="group.captures" />

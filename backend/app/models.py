@@ -116,3 +116,4 @@ class CaptureMedia(BaseModel):
     created_at: datetime | None = None
     video_url: str
     telemetry_url: str | None = None
+    sync_point_seconds: float | None = None

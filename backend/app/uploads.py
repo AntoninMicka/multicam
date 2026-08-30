@@ -200,6 +200,10 @@ class UploadService:
 
     def list_media(self, session: Session) -> list[CaptureMedia]:
         result: list[CaptureMedia] = []
+        try:
+            sync_analysis = json.loads((self.root / str(session.session_id) / "analysis.json").read_text(encoding="utf-8")).get("captures", {})
+        except (OSError, ValueError):
+            sync_analysis = {}
         for device in session.devices.values():
             uploads_dir = self._device_dir(session.session_id, device.device_id) / ".uploads"
             captures: dict[str, dict[str, dict]] = {}
@@ -230,6 +234,10 @@ class UploadService:
                     created_at=created_at,
                     video_url=f"/api/media/{session.session_id}/{device.device_id}/{capture_id}/video",
                     telemetry_url=telemetry_url,
+                    sync_point_seconds=(
+                        sync_analysis.get(capture_id, {}).get("flash_seconds")
+                        if sync_analysis.get(capture_id, {}).get("status") == "detected" else None
+                    ),
                 ))
         return sorted(result, key=lambda item: item.created_at or datetime.min.replace(tzinfo=timezone.utc))
 

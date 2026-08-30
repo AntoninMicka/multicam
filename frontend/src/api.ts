@@ -32,6 +32,7 @@ export interface CaptureMedia {
   created_at: string | null
   video_url: string
   telemetry_url: string | null
+  sync_point_seconds: number | null
 }
 
 async function json<T>(response: Response): Promise<T> {

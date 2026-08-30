@@ -38,6 +38,7 @@ const current = computed<TelemetrySample | null>(() => {
   return nearest
 })
 const syncOffsetSeconds = computed(() => {
+  if (props.capture.sync_point_seconds != null) return props.capture.sync_point_seconds
   const marker = samples.value.find((sample) => sample.event === 'sync_marker' && sample.recording_offset_ms !== null)
   return (marker?.recording_offset_ms ?? 0) / 1000
 })

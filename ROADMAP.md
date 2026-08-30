@@ -44,7 +44,7 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 - [~] Ukládat plánovaný i skutečný lokální čas startu/stopu (ukládá se čas přijetí povelu, lokální monotónní i UTC čas; chybí plánovaný start a síťová korekce).
 - [~] Použít dobře viditelný záblesk nebo LED panel jako obrazovou klapku (automatická klapka po 2 s, hardwarová svítilna hlavní kamery a obrazovkový fallback jsou implementované; zbývá terénní ověření).
 - [ ] Přidat volitelnou zvukovou klapku pro záložní synchronizaci.
-- [ ] V postprocessingu detekovat klapku ve videích a uložit korekci časové osy.
+- [~] V postprocessingu detekovat klapku ve videích a uložit korekci časové osy (FFmpeg analyzuje skok průměrného jasu kolem telemetrického markeru, ukládá jistotu a korekci do `analysis.json` a reportu; zbývá ověření na různých scénách a světelných podmínkách).
 - [~] Ověřit omezení ovládání svítilny v cílových mobilních prohlížečích (Chrome/Android je podporován experimentálně; externí světlo a testovací matice chybí).
 - [x] Označit všechny kamerové záznamy ze stejného startu/klapky společným `take_id` a seskupit je na režisérském pultu.
 - [~] Přehrávat skupinu kamer jedním tlačítkem se souběžnou telemetrií (master čas je zarovnaný podle `sync_marker`, drift se koriguje a každý dekodér ukazuje stav; zbývá ověření Chromia na cílovém stroji).
