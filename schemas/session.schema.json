@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multicam.local/schemas/session-1.0.json",
+  "title": "MultiCam session manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "session_id", "name", "state", "created_at", "devices"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "session_id": { "type": "string", "format": "uuid" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "state": { "enum": ["created", "armed", "recording", "stopped"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "devices": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/device" }
+    }
+  },
+  "$defs": {
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device_id", "name", "role", "state", "capabilities", "connected", "last_seen_at"],
+      "properties": {
+        "device_id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "role": { "enum": ["main_camera", "top_camera", "secondary_camera"] },
+        "state": { "enum": ["disconnected", "ready", "recording", "stored", "uploading", "verified"] },
+        "connected": { "type": "boolean" },
+        "last_seen_at": { "type": "string", "format": "date-time" },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "battery_percent": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+            "free_storage_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "camera_permission": { "type": ["boolean", "null"] },
+            "microphone_permission": { "type": ["boolean", "null"] }
+          }
+        }
+      }
+    }
+  }
+}

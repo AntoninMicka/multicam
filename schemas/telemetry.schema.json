@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multicam.local/schemas/telemetry-1.0.json",
+  "title": "MultiCam telemetry event",
+  "description": "Schéma jednoho řádku timing.jsonl.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event", "monotonic_ms"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "event": {
+      "enum": ["recording_requested", "recording_started", "recording_stopped", "clock_sample", "sync_marker"]
+    },
+    "monotonic_ms": { "type": "number", "minimum": 0 },
+    "recording_offset_ms": { "type": ["number", "null"] },
+    "utc_time": { "type": ["string", "null"], "format": "date-time" },
+    "server_offset_ms": { "type": ["number", "null"] },
+    "round_trip_ms": { "type": ["number", "null"], "minimum": 0 },
+    "details": { "type": "object" }
+  }
+}

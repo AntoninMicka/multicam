@@ -28,6 +28,50 @@ Mimo scope jsou kalibrace prostoru, rekonstrukce scény, detekce a sledování o
 - [ROADMAP.md](ROADMAP.md) – fáze vývoje, akceptační kritéria a terénní checklist
 - [ARCHITECTURE.md](ARCHITECTURE.md) – komponenty, datový tok a zásadní technická omezení
 
+## Lokální spuštění
+
+Nejjednodušší spuštění celé aplikace:
+
+```bash
+./run.sh
+```
+
+Skript podle potřeby vytvoří `.venv`, nainstaluje Python a npm závislosti, sestaví PWA a spustí FastAPI server. Výchozí adresa je `http://0.0.0.0:8000`; nastavení lze změnit například takto:
+
+```bash
+MULTICAM_HOST=127.0.0.1 MULTICAM_PORT=9000 ./run.sh
+```
+
+Další argumenty se předají přímo Uvicornu, například `./run.sh --reload`.
+
+### Ruční spuštění
+
+Backend:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements-dev.txt
+.venv/bin/uvicorn backend.app.main:app --reload
+```
+
+Frontend v druhém terminálu:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Režisérský pult i kamerový klient jsou součástí stejné PWA na `http://localhost:5173`. Produkční build vytvoří `frontend/dist`; FastAPI jej při dalším startu automaticky zpřístupní na portu 8000.
+
+V sandboxovém režimu existuje vždy jedna aktuální relace, kterou klienti vyhledají automaticky. Není proto nutné opisovat její ID. Zařízení si při připojení zvolí roli hlavní, top-over nebo vedlejší kamery; vedlejších kamer může být libovolný počet. Režisér může hlavní kameře přes WebSocket poslat povel k celoobrazovkové světelné klapce; stejnou klapku lze na hlavní kameře otestovat lokálně.
+
+REST API dokumentace je za běhu dostupná na `http://localhost:8000/docs`. Manifest relace a časové události mají verzovaná schémata v adresáři [`schemas`](schemas).
+
+## Aktuální stav
+
+Fáze 1 obsahuje in-memory správu relací a zařízení. Restart serveru proto relace smaže; perzistentní úložiště bude doplněno spolu se záznamovou a uploadovací částí.
+
 ## Definice úspěchu MVP
 
 - všechna zařízení se připojí k jedné relaci a zobrazí stav připravenosti;

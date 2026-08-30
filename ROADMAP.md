@@ -13,12 +13,12 @@
 
 ## 1. Kostra systému a relace
 
-- [ ] Založit Vue 3/Vite/TypeScript PWA s manifestem a offline app shellem.
-- [ ] Založit FastAPI server pro statické soubory, REST API a WebSocket.
-- [ ] Zavést role `director` a `camera` a registraci zařízení.
-- [ ] Zavést `session_id`, `device_id`, stavový automat (`disconnected`, `ready`, `recording`, `stored`, `uploading`, `verified`).
-- [ ] V režisérském UI zobrazit připojená zařízení, baterii, místo, oprávnění a připravenost.
-- [ ] Definovat verzované JSON schéma manifestu relace a telemetrie.
+- [x] Založit Vue 3/Vite/TypeScript PWA s manifestem a offline app shellem.
+- [x] Založit FastAPI server pro statické soubory, REST API a WebSocket.
+- [x] Zavést role `director` a `camera` a registraci zařízení.
+- [x] Zavést `session_id`, `device_id`, stavový automat (`disconnected`, `ready`, `recording`, `stored`, `uploading`, `verified`).
+- [x] V režisérském UI zobrazit připojená zařízení, baterii, místo, oprávnění a připravenost.
+- [x] Definovat verzované JSON schéma manifestu relace a telemetrie.
 
 **Hotovo, když:** režisér vidí všechny telefony a jejich stav a dokáže založit relaci bez nahrávání.
 
