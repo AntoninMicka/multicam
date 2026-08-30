@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
-import { createSession, getCurrentSession, getSession, registerDevice, sessionSocket, type DeviceCapabilities } from './api'
+import { createSession, getCurrentSession, getSession, registerDevice, sessionSocket, uploadArtifact, type DeviceCapabilities } from './api'
 import type { Session } from './types'
 
 type Role = 'director' | 'main_camera' | 'top_camera' | 'secondary_camera'
@@ -16,11 +16,29 @@ const preview = ref<HTMLVideoElement | null>(null)
 const recording = ref(false)
 const recordingUrl = ref('')
 const cameraReady = ref(false)
+const uploadProgress = ref<number | null>(null)
+const uploadVerified = ref(false)
+const deviceUploadProgress = ref<Record<string, number>>({})
 let socket: WebSocket | null = null
 let flashTimer: number | undefined
+let torchTimer: number | undefined
 let mediaStream: MediaStream | null = null
 let mediaRecorder: MediaRecorder | null = null
 let recordedChunks: Blob[] = []
+let captureId = ''
+let recordingStartedAt: number | null = null
+let telemetryTimer: number | undefined
+
+interface TelemetryEvent {
+  schema_version: '1.0'
+  event: 'recording_requested' | 'recording_started' | 'recording_stopped' | 'clock_sample' | 'sync_marker'
+  monotonic_ms: number
+  recording_offset_ms: number | null
+  utc_time: string
+  details?: Record<string, unknown>
+}
+
+let telemetryEvents: TelemetryEvent[] = []
 
 const devices = computed(() => Object.values(session.value?.devices ?? {}))
 
@@ -62,9 +80,16 @@ function connectSocket(id: string, cameraId?: string) {
   socket.onmessage = (event) => {
     const message = JSON.parse(event.data)
     if (message.type === 'session.snapshot' || message.type === 'session.updated') session.value = message.payload
-    if (message.type === 'clap.trigger' && role.value === 'main_camera') flashClap()
-    if (message.type === 'recording.start' && role.value !== 'director') startLocalRecording()
+    if (message.type === 'clap.trigger' && role.value !== 'director') {
+      recordTelemetry('sync_marker', message.payload)
+      if (role.value === 'main_camera') flashClap()
+    }
+    if (message.type === 'recording.start' && role.value !== 'director') startLocalRecording(message.payload)
     if (message.type === 'recording.stop' && role.value !== 'director') stopLocalRecording()
+    if (message.type === 'upload.progress') {
+      const { device_id, received_chunks, total_chunks } = message.payload
+      deviceUploadProgress.value[device_id] = Math.round(received_chunks / total_chunks * 100)
+    }
   }
   socket.onerror = () => (error.value = 'Spojení se serverem bylo přerušeno.')
 }
@@ -98,7 +123,7 @@ async function joinCamera() {
     connectSocket(activeSession.session_id, device.device_id)
     await nextTick()
     await prepareCamera()
-    if (activeSession.state === 'recording') startLocalRecording()
+    if (activeSession.state === 'recording') startLocalRecording({ joined_during_recording: true })
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'K relaci se nelze připojit.'
   } finally {
@@ -135,23 +160,69 @@ async function prepareCamera() {
   }
 }
 
-function startLocalRecording() {
+function recordTelemetry(event: TelemetryEvent['event'], details?: Record<string, unknown>) {
+  const monotonic = performance.now()
+  telemetryEvents.push({
+    schema_version: '1.0',
+    event,
+    monotonic_ms: monotonic,
+    recording_offset_ms: recordingStartedAt === null ? null : monotonic - recordingStartedAt,
+    utc_time: new Date().toISOString(),
+    ...(details ? { details } : {}),
+  })
+}
+
+function startLocalRecording(requestDetails: Record<string, unknown> = {}) {
   if (!mediaStream || recording.value) return
   try {
     const preferredTypes = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
     const mimeType = preferredTypes.find((type) => MediaRecorder.isTypeSupported(type))
     recordedChunks = []
+    captureId = crypto.randomUUID()
+    recordingStartedAt = null
+    telemetryEvents = []
+    recordTelemetry('recording_requested', requestDetails)
     if (recordingUrl.value) URL.revokeObjectURL(recordingUrl.value)
     recordingUrl.value = ''
     mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined)
     mediaRecorder.ondataavailable = (event) => {
       if (event.data.size) recordedChunks.push(event.data)
     }
-    mediaRecorder.onstop = () => {
+    mediaRecorder.onstop = async () => {
       const blob = new Blob(recordedChunks, { type: mediaRecorder?.mimeType || 'video/webm' })
       recordingUrl.value = URL.createObjectURL(blob)
+      if (!session.value || !deviceId.value || blob.size === 0) return
+      const telemetry = new Blob(
+        telemetryEvents.map((event) => `${JSON.stringify(event)}\n`),
+        { type: 'application/x-ndjson' },
+      )
+      uploadProgress.value = 0
+      uploadVerified.value = false
+      try {
+        let videoProgress = 0
+        let telemetryProgress = 0
+        const updateProgress = () => {
+          uploadProgress.value = Math.round((videoProgress * blob.size + telemetryProgress * telemetry.size) / (blob.size + telemetry.size))
+        }
+        await Promise.all([
+          uploadArtifact(session.value.session_id, deviceId.value, captureId, 'recording', blob, (progress) => {
+            videoProgress = progress
+            updateProgress()
+          }),
+          uploadArtifact(session.value.session_id, deviceId.value, captureId, 'telemetry', telemetry, (progress) => {
+            telemetryProgress = progress
+            updateProgress()
+          }),
+        ])
+        uploadVerified.value = true
+      } catch (reason) {
+        error.value = reason instanceof Error ? `Přenos selhal: ${reason.message}` : 'Přenos záznamu selhal.'
+      }
     }
     mediaRecorder.start(1000)
+    recordingStartedAt = performance.now()
+    recordTelemetry('recording_started')
+    telemetryTimer = window.setInterval(() => recordTelemetry('clock_sample'), 1000)
     recording.value = true
   } catch {
     error.value = 'Záznam se na tomto zařízení nepodařilo spustit.'
@@ -160,12 +231,26 @@ function startLocalRecording() {
 
 function stopLocalRecording() {
   if (!mediaRecorder || mediaRecorder.state === 'inactive') return
+  recordTelemetry('recording_stopped')
+  window.clearInterval(telemetryTimer)
   mediaRecorder.stop()
   recording.value = false
 }
 
-function flashClap() {
+async function flashClap() {
   window.clearTimeout(flashTimer)
+  const videoTrack = mediaStream?.getVideoTracks()[0]
+  const capabilities = videoTrack?.getCapabilities() as (MediaTrackCapabilities & { torch?: boolean }) | undefined
+  if (videoTrack && capabilities?.torch) {
+    try {
+      await videoTrack.applyConstraints({ advanced: [{ torch: true } as MediaTrackConstraintSet] })
+      window.clearTimeout(torchTimer)
+      torchTimer = window.setTimeout(() => {
+        void videoTrack.applyConstraints({ advanced: [{ torch: false } as MediaTrackConstraintSet] })
+      }, 700)
+      return
+    } catch { /* Chrome může capability hlásit, ale změnu přesto odmítnout. */ }
+  }
   flashVisible.value = true
   flashTimer = window.setTimeout(() => (flashVisible.value = false), 700)
 }
@@ -182,6 +267,10 @@ onBeforeUnmount(() => {
   mediaStream?.getTracks().forEach((track) => track.stop())
   if (recordingUrl.value) URL.revokeObjectURL(recordingUrl.value)
   window.clearTimeout(flashTimer)
+  window.clearTimeout(torchTimer)
+  const videoTrack = mediaStream?.getVideoTracks()[0]
+  if (videoTrack) void videoTrack.applyConstraints({ advanced: [{ torch: false } as MediaTrackConstraintSet] }).catch(() => undefined)
+  window.clearInterval(telemetryTimer)
 })
 </script>
 
@@ -225,7 +314,7 @@ onBeforeUnmount(() => {
         <p v-if="!devices.length" class="muted">Čekám na připojení prvního telefonu…</p>
         <article v-for="device in devices" :key="device.device_id" class="device">
           <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small></div>
-          <span :class="['dot', { offline: !device.connected }]">{{ device.connected ? device.state : 'odpojeno' }}</span>
+          <span :class="['dot', { offline: !device.connected }]">{{ device.connected ? (device.state === 'uploading' ? `přenos ${deviceUploadProgress[device.device_id] ?? 0} %` : device.state) : 'odpojeno' }}</span>
         </article>
       </template>
       <template v-else>
@@ -237,6 +326,10 @@ onBeforeUnmount(() => {
         </div>
         <p v-else-if="recording" class="recording-indicator">● Probíhá záznam</p>
         <button v-if="role === 'main_camera'" class="clap-button" @click="flashClap">Otestovat světelnou klapku</button>
+        <div v-if="uploadProgress !== null" class="upload">
+          <div><strong>{{ uploadVerified ? 'Přenos ověřen' : 'Přenáším záznam' }}</strong><span>{{ uploadProgress }} %</span></div>
+          <progress :value="uploadProgress" max="100"></progress>
+        </div>
         <a v-if="recordingUrl" class="download" :href="recordingUrl" :download="`${role}-${Date.now()}.webm`">Stáhnout poslední záznam</a>
       </template>
     </section>

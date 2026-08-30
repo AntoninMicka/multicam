@@ -1,12 +1,26 @@
+import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .models import Device, DeviceRegistration, Session, SessionCreate, SessionState, SocketMessage
+from .models import (
+    Device,
+    DeviceRegistration,
+    DeviceState,
+    Session,
+    SessionCreate,
+    SessionState,
+    SocketMessage,
+    UploadCreate,
+    UploadReceipt,
+    UploadStatus,
+)
 from .store import SessionNotFoundError, store
+from .uploads import UploadConflictError, UploadNotFoundError, uploads
 from .websocket import connections
 
 app = FastAPI(title="MultiCam control server", version="0.1.0")
@@ -60,6 +74,88 @@ async def register_device(session_id: UUID, data: DeviceRegistration) -> Device:
     return device
 
 
+async def require_device(session_id: UUID, device_id: UUID) -> None:
+    try:
+        session = await store.get(session_id)
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Session not found") from error
+    if str(device_id) not in session.devices:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+
+@app.post(
+    "/api/sessions/{session_id}/devices/{device_id}/uploads",
+    response_model=UploadStatus,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_upload(session_id: UUID, device_id: UUID, data: UploadCreate) -> UploadStatus:
+    await require_device(session_id, device_id)
+    result = await uploads.create(session_id, device_id, data)
+    updated = await store.set_device_state(session_id, device_id, DeviceState.UPLOADING)
+    await connections.broadcast(session_id, {"type": "session.updated", "payload": updated.model_dump(mode="json")})
+    return result
+
+
+@app.get(
+    "/api/sessions/{session_id}/devices/{device_id}/uploads/{upload_id}",
+    response_model=UploadStatus,
+)
+async def get_upload(session_id: UUID, device_id: UUID, upload_id: UUID) -> UploadStatus:
+    await require_device(session_id, device_id)
+    try:
+        return uploads.status(session_id, device_id, upload_id)
+    except UploadNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Upload not found") from error
+
+
+@app.put(
+    "/api/sessions/{session_id}/devices/{device_id}/uploads/{upload_id}/chunks/{index}",
+    response_model=UploadStatus,
+)
+async def put_upload_chunk(
+    session_id: UUID,
+    device_id: UUID,
+    upload_id: UUID,
+    index: int,
+    request: Request,
+    chunk_sha256: str = Header(alias="X-Chunk-SHA256", pattern=r"^[0-9a-f]{64}$"),
+) -> UploadStatus:
+    await require_device(session_id, device_id)
+    try:
+        result = await uploads.put_chunk(session_id, device_id, upload_id, index, await request.body(), chunk_sha256)
+    except UploadNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Upload not found") from error
+    except UploadConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    await connections.broadcast(session_id, {
+        "type": "upload.progress",
+        "payload": {
+            "device_id": str(device_id),
+            "received_chunks": len(result.received_chunks),
+            "total_chunks": result.total_chunks,
+        },
+    })
+    return result
+
+
+@app.post(
+    "/api/sessions/{session_id}/devices/{device_id}/uploads/{upload_id}/complete",
+    response_model=UploadReceipt,
+)
+async def complete_upload(session_id: UUID, device_id: UUID, upload_id: UUID) -> UploadReceipt:
+    await require_device(session_id, device_id)
+    try:
+        receipt = await uploads.complete(session_id, device_id, upload_id)
+    except UploadNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Upload not found") from error
+    except UploadConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    next_state = DeviceState.VERIFIED if uploads.capture_verified(session_id, device_id, receipt.capture_id) else DeviceState.UPLOADING
+    updated = await store.set_device_state(session_id, device_id, next_state)
+    await connections.broadcast(session_id, {"type": "session.updated", "payload": updated.model_dump(mode="json")})
+    return receipt
+
+
 @app.websocket("/api/ws/{session_id}")
 async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID | None = None) -> None:
     try:
@@ -79,11 +175,27 @@ async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID
                 session = await store.set_state(session_id, SessionState.STOPPED)
                 await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
             await connections.broadcast(session_id, message.model_dump(mode="json"))
+            if message.type == "recording.start":
+                asyncio.create_task(trigger_delayed_clap(session_id))
     except WebSocketDisconnect:
         connections.disconnect(session_id, websocket)
         if device_id is not None:
             await store.set_connected(session_id, device_id, False)
             await connections.broadcast(session_id, {"type": "session.updated", "payload": (await store.get(session_id)).model_dump(mode="json")})
+
+
+async def trigger_delayed_clap(session_id: UUID) -> None:
+    await asyncio.sleep(2)
+    try:
+        session = await store.get(session_id)
+    except SessionNotFoundError:
+        return
+    if session.state != SessionState.RECORDING:
+        return
+    await connections.broadcast(session_id, {
+        "type": "clap.trigger",
+        "payload": {"requested_at": datetime.now(timezone.utc).isoformat(), "automatic": True},
+    })
 
 
 frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"

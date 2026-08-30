@@ -48,11 +48,11 @@
 
 ## 4. Spolehlivý přenos na notebook
 
-- [ ] Připravit endpointy pro manifest, chunkovaný upload a dokončení souboru.
-- [ ] Ukládat uploady atomicky do adresářů podle relace a zařízení.
-- [ ] Podporovat opakování bloků, pokračování přenosu a idempotentní požadavky.
-- [ ] Po dokončení ověřit počet bloků, velikost a SHA-256 videa i telemetrie.
-- [ ] Server vrátí podepsané/identifikovatelné potvrzení o převzetí.
+- [x] Připravit endpointy pro manifest, chunkovaný upload a dokončení souboru.
+- [x] Ukládat uploady atomicky do adresářů podle relace a zařízení.
+- [x] Podporovat opakování bloků, pokračování přenosu a idempotentní požadavky.
+- [x] Po dokončení ověřit počet bloků, velikost a SHA-256 videa i telemetrie.
+- [x] Server vrátí podepsané/identifikovatelné potvrzení o převzetí.
 - [ ] Smazání v telefonu povolit až po potvrzení; výchozí chování má vyžadovat vědomé potvrzení uživatele.
 - [ ] Zobrazit průběh, rychlost, zbývající čas a chyby jednotlivých telefonů.
 

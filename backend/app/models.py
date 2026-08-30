@@ -71,3 +71,33 @@ class Session(BaseModel):
 class SocketMessage(BaseModel):
     type: str
     payload: dict = Field(default_factory=dict)
+
+
+class UploadCreate(BaseModel):
+    capture_id: UUID = Field(default_factory=uuid4)
+    kind: str = Field(default="recording", pattern=r"^(recording|telemetry)$")
+    file_name: str = Field(min_length=1, max_length=160)
+    mime_type: str = Field(min_length=1, max_length=120)
+    size_bytes: int = Field(gt=0)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    chunk_size: int = Field(ge=256 * 1024, le=16 * 1024 * 1024)
+    total_chunks: int = Field(gt=0)
+
+
+class UploadStatus(BaseModel):
+    upload_id: UUID
+    received_chunks: list[int]
+    total_chunks: int
+    size_bytes: int
+    complete: bool = False
+
+
+class UploadReceipt(BaseModel):
+    upload_id: UUID
+    capture_id: UUID
+    kind: str
+    receipt_id: UUID
+    file_path: str
+    size_bytes: int
+    sha256: str
+    verified: bool = True

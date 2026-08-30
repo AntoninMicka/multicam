@@ -54,6 +54,18 @@ class SessionStore:
                 device.connected = connected
                 device.last_seen_at = utc_now()
 
+    async def set_device_state(self, session_id: UUID, device_id: UUID, state: DeviceState) -> Session:
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                raise SessionNotFoundError(session_id)
+            device = session.devices.get(str(device_id))
+            if device is None:
+                raise KeyError(device_id)
+            device.state = state
+            device.last_seen_at = utc_now()
+            return session.model_copy(deep=True)
+
     async def current(self) -> Session:
         async with self._lock:
             if not self._sessions:

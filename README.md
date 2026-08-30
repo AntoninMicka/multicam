@@ -78,7 +78,13 @@ Režisérský pult i kamerový klient jsou součástí stejné PWA na `http://lo
 
 V sandboxovém režimu existuje vždy jedna aktuální relace, kterou klienti vyhledají automaticky. Není proto nutné opisovat její ID. Zařízení si při připojení zvolí roli hlavní, top-over nebo vedlejší kamery; vedlejších kamer může být libovolný počet. Režisér může hlavní kameře přes WebSocket poslat povel k celoobrazovkové světelné klapce; stejnou klapku lze na hlavní kameře otestovat lokálně.
 
-Spuštění a zastavení záznamu lze ovládat z režisérského pultu i z hlavní kamery. Povel se přenese na všechny připojené kamery. Aktuální prototyp drží bloky záznamu v paměti prohlížeče a po zastavení nabídne soubor ke stažení; bezpečné ukládání po blocích do IndexedDB patří do následující fáze.
+Spuštění a zastavení záznamu lze ovládat z režisérského pultu i z hlavní kamery. Povel se přenese na všechny připojené kamery. Po zastavení klient vypočítá SHA-256 a automaticky odešle záznam ve 4MB blocích. Server podporuje opakované bloky a navázání podle již přijatých částí, výsledný soubor skládá atomicky a označí zařízení jako `verified` až po kontrole velikosti a SHA-256. Data se ukládají do `data/sessions/`; umístění lze změnit proměnnou `MULTICAM_DATA_DIR`.
+
+Ke každému videu klient vytváří párovaný telemetrický soubor JSON Lines s monotónními a UTC časy startu, stopu, pravidelných vzorků hodin a přijetí synchronizační klapky. Zařízení přejde do stavu `verified` až po ověření videa i telemetrie.
+
+Dvě sekundy po povelu ke spuštění záznamu server automaticky vyšle světelnou klapku. Hlavní kamera zkusí přes `MediaStreamTrack.applyConstraints()` zapnout hardwarovou svítilnu (`torch`), což je určeno především pro Chrome na Androidu. Pokud prohlížeč nebo telefon tuto možnost neposkytne, použije se celoobrazovkový bílý záblesk.
+
+Aktuální prototyp stále drží bloky záznamu v paměti prohlížeče a po zastavení nabídne i lokální stažení. Bezpečné průběžné ukládání do IndexedDB a obnovení po reloadu patří do následující fáze; lokální kopie se po uploadu automaticky nemaže.
 
 REST API dokumentace je za běhu dostupná na `http://localhost:8000/docs`. Manifest relace a časové události mají verzovaná schémata v adresáři [`schemas`](schemas).
 
