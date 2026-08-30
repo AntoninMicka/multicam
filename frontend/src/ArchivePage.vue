@@ -7,7 +7,7 @@ import {
   listSessions,
   type CaptureMedia,
 } from './api'
-import CapturePlayer from './CapturePlayer.vue'
+import CaptureGroup from './CaptureGroup.vue'
 
 defineEmits<{ close: [] }>()
 
@@ -101,13 +101,13 @@ onMounted(loadArchive)
       <section v-for="group in groups" :key="`${group.sessionId}:${group.takeId}`" class="archive-group">
         <header>
           <div><strong>{{ group.sessionName }}</strong><small>Klapka {{ group.captures[0]?.created_at ? new Date(group.captures[0].created_at).toLocaleString() : group.takeId.slice(0, 8) }}</small></div>
-          <button class="small danger" :disabled="deleting" @click="removeGroup(group)">Smazat skupinu</button>
+          <button class="small danger" :disabled="deleting" @click="removeGroup(group)">Smazat celou klapku</button>
         </header>
-        <div class="archive-streams">
-          <div v-for="capture in group.captures" :key="capture.capture_id" class="archive-capture">
-            <CapturePlayer :capture="capture" :muted="capture.role !== 'main_camera'" />
-            <button class="small danger capture-delete" :disabled="deleting" @click="removeCapture(capture)">Smazat záběr</button>
-          </div>
+        <CaptureGroup :captures="group.captures" />
+        <div class="capture-actions">
+          <button v-for="capture in group.captures" :key="capture.capture_id" class="small danger" :disabled="deleting" @click="removeCapture(capture)">
+            Smazat: {{ capture.device_name }}
+          </button>
         </div>
       </section>
     </div>
@@ -122,9 +122,7 @@ onMounted(loadArchive)
 .archive-group { padding: 16px; border: 1px solid #405170; border-radius: 18px; background: #111b2d; }
 .archive-group > header { margin-bottom: 14px; }
 .archive-group > header div { display: grid; gap: 4px; }
-.archive-streams { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 14px; }
-.archive-capture { display: grid; gap: 8px; align-content: start; }
-.capture-delete { width: 100%; }
+.capture-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 small { color: #8391a7; }
 @media (max-width: 520px) { .archive-group > header { align-items: stretch; flex-direction: column; } }
 </style>
