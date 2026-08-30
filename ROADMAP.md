@@ -39,7 +39,7 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 
 ## 3. Řízení a synchronizace
 
-- [~] Implementovat přes WebSocket povely `ARM`, `START`, `STOP` s potvrzením od každého klienta (`START`/`STOP` fungují z pultu i hlavní kamery, chybí `ARM`, ACK a timeouty).
+- [x] Implementovat přes WebSocket povely `ARM`, `START`, `STOP` s potvrzením od každého klienta, chybovým stavem a timeoutem; server odmítne `START`, dokud všechny připojené kamery nepotvrdí ARM.
 - [ ] Změřit offset a round-trip time hodin mezi telefony a serverem opakovaným handshake.
 - [~] Ukládat plánovaný i skutečný lokální čas startu/stopu (ukládá se čas přijetí povelu, lokální monotónní i UTC čas; chybí plánovaný start a síťová korekce).
 - [~] Použít dobře viditelný záblesk nebo LED panel jako obrazovou klapku (automatická klapka po 2 s, hardwarová svítilna hlavní kamery a obrazovkový fallback jsou implementované; zbývá terénní ověření).
@@ -114,16 +114,14 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 
 ## Doporučené další práce
 
-1. **ACK a stavový protokol `ARM` → `START` → `STOP`.** Pult musí před natáčením
-   poznat, která kamera povel přijala, skutečně začala nahrávat nebo selhala.
-2. **Diagnostika a synchronizace skupinového přehrávače v Chromiu.** Zobrazit stav
+1. **Diagnostika a synchronizace skupinového přehrávače v Chromiu.** Zobrazit stav
    načtení/dekódování každého streamu a zavést jeden master čas, podle kterého se
    ostatní videa průběžně dorovnají.
-3. **Ochrana záznamu na telefonu.** Wake Lock, reakce na `visibilitychange`, kontrola
+2. **Ochrana záznamu na telefonu.** Wake Lock, reakce na `visibilitychange`, kontrola
    volného místa před startem a jasná chyba při ztrátě kamery, mikrofonu či úložiště.
-4. **Měřený síťový handshake.** Průběžně ukládat offset a RTT každé kamery; tím vznikne
+3. **Měřený síťový handshake.** Průběžně ukládat offset a RTT každé kamery; tím vznikne
    lepší hrubé zarovnání i diagnostika před obrazovou detekcí klapky.
-5. **Integrační zkouška na reálných telefonech.** Nejdřív dvě kamery, pak cílový počet;
+4. **Integrační zkouška na reálných telefonech.** Nejdřív dvě kamery, pak cílový počet;
    otestovat restart, výpadek Wi-Fi, paralelní upload, teplotu a několikaminutový záznam.
-6. **Výstupní manifest a report úplnosti.** Pro každou klapku shrnout očekávané a
+5. **Výstupní manifest a report úplnosti.** Pro každou klapku shrnout očekávané a
    přijaté kamery, délky, velikosti, checksumy a později korekce časových os.

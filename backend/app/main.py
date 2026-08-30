@@ -208,13 +208,35 @@ async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID
     try:
         while True:
             message = SocketMessage.model_validate(await websocket.receive_json())
-            if message.type == "recording.start":
+            if message.type == "control.arm":
+                session = await store.set_state(session_id, SessionState.ARMED)
+                await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
+            elif message.type == "recording.start":
+                current = await store.get(session_id)
+                unready = [device.name for device in current.devices.values() if device.connected and device.state != DeviceState.ARMED]
+                if unready:
+                    await websocket.send_json({
+                        "type": "control.rejected",
+                        "payload": {"command_id": message.payload.get("command_id"), "detail": f"Kamery bez ARM: {', '.join(unready)}"},
+                    })
+                    continue
                 message.payload["take_id"] = str(uuid4())
                 session = await store.set_state(session_id, SessionState.RECORDING)
                 await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
             elif message.type == "recording.stop":
                 session = await store.set_state(session_id, SessionState.STOPPED)
                 await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
+            elif message.type == "control.ack" and device_id is not None:
+                ack_state = {
+                    "ready": DeviceState.ARMED,
+                    "started": DeviceState.RECORDING,
+                    "stopped": DeviceState.STORED,
+                    "error": DeviceState.READY,
+                }.get(message.payload.get("status"))
+                if ack_state is not None:
+                    session = await store.set_device_state(session_id, device_id, ack_state)
+                    message.payload["device_id"] = str(device_id)
+                    await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
             await connections.broadcast(session_id, message.model_dump(mode="json"))
             if message.type == "recording.start":
                 asyncio.create_task(trigger_delayed_clap(session_id))

@@ -1,4 +1,4 @@
-export type DeviceState = 'disconnected' | 'ready' | 'recording' | 'stored' | 'uploading' | 'verified'
+export type DeviceState = 'disconnected' | 'ready' | 'armed' | 'recording' | 'stored' | 'uploading' | 'verified'
 
 export interface Device {
   device_id: string

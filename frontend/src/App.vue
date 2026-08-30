@@ -48,7 +48,13 @@ const sessionMedia = ref<CaptureMedia[]>([])
 const recordingStarting = ref(false)
 const recordingFinalizing = ref(false)
 const uploadingCaptureId = ref<string | null>(null)
+type AckStatus = 'pending' | 'ready' | 'started' | 'stopped' | 'error' | 'timeout'
+interface ControlAck { status: AckStatus; detail?: string }
+const controlAcks = ref<Record<string, ControlAck>>({})
+const activeCommandId = ref('')
+const activeCommandType = ref('')
 let socket: WebSocket | null = null
+let commandTimeout: number | undefined
 let flashTimer: number | undefined
 let torchTimer: number | undefined
 let mediaStream: MediaStream | null = null
@@ -101,6 +107,10 @@ interface TelemetryEvent {
 }
 
 const devices = computed(() => Object.values(session.value?.devices ?? {}))
+const connectedDevices = computed(() => devices.value.filter((device) => device.connected))
+const allCamerasArmed = computed(() => connectedDevices.value.length > 0 && connectedDevices.value.every(
+  (device) => controlAcks.value[device.device_id]?.status === 'ready' || device.state === 'armed',
+))
 const captureGroups = computed(() => {
   const groups = new Map<string, CaptureMedia[]>()
   for (const capture of sessionMedia.value) {
@@ -148,10 +158,22 @@ function permissionLabel(value: boolean | null): string {
   return value === true ? 'ano' : value === false ? 'ne' : 'nezjištěno'
 }
 
+function ackLabel(ack: ControlAck | undefined): string {
+  if (!ack) return ''
+  return {
+    pending: 'čekám na potvrzení',
+    ready: 'ARM potvrzen',
+    started: 'START potvrzen',
+    stopped: 'STOP potvrzen',
+    error: `chyba${ack.detail ? `: ${ack.detail}` : ''}`,
+    timeout: 'bez odpovědi',
+  }[ack.status]
+}
+
 function connectSocket(id: string, cameraId?: string) {
   socket?.close()
   socket = sessionSocket(id, cameraId)
-  socket.onmessage = (event) => {
+  socket.onmessage = async (event) => {
     const message = JSON.parse(event.data)
     if (message.type === 'session.snapshot' || message.type === 'session.updated') {
       session.value = message.payload
@@ -161,8 +183,27 @@ function connectSocket(id: string, cameraId?: string) {
       recordTelemetry('sync_marker', message.payload)
       if (role.value === 'main_camera') flashClap()
     }
-    if (message.type === 'recording.start' && role.value !== 'director') void startLocalRecording(message.payload)
-    if (message.type === 'recording.stop' && role.value !== 'director') stopLocalRecording()
+    if (message.type === 'control.arm' && role.value !== 'director') {
+      const ready = cameraReady.value && !!mediaStream && mediaStream.getVideoTracks().some((track) => track.readyState === 'live')
+      sendControlAck(message.payload.command_id, ready ? 'ready' : 'error', ready ? undefined : 'Kamera nebo mikrofon nejsou připravené.')
+    }
+    if (message.type === 'recording.start' && role.value !== 'director') {
+      const started = await startLocalRecording(message.payload)
+      sendControlAck(message.payload.command_id, started ? 'started' : 'error', started ? undefined : error.value)
+    }
+    if (message.type === 'recording.stop' && role.value !== 'director') {
+      const stopped = stopLocalRecording()
+      sendControlAck(message.payload.command_id, stopped ? 'stopped' : 'error', stopped ? undefined : 'Na zařízení neběžel záznam.')
+    }
+    if (message.type === 'control.ack' && role.value === 'director' && message.payload.command_id === activeCommandId.value) {
+      controlAcks.value[message.payload.device_id] = {
+        status: message.payload.status,
+        detail: message.payload.detail,
+      }
+    }
+    if (message.type === 'control.rejected') {
+      error.value = message.payload.detail ?? 'Server řídicí povel odmítl.'
+    }
     if (message.type === 'upload.progress') {
       const { device_id, received_chunks, total_chunks } = message.payload
       deviceUploadProgress.value[device_id] = Math.round(received_chunks / total_chunks * 100)
@@ -257,12 +298,29 @@ function triggerClap() {
   socket.send(JSON.stringify({ type: 'clap.trigger', payload: { requested_at: new Date().toISOString() } }))
 }
 
-function sendRecordingCommand(type: 'recording.start' | 'recording.stop') {
+function sendControlAck(commandId: string | undefined, status: 'ready' | 'started' | 'stopped' | 'error', detail?: string) {
+  if (!commandId || !socket || socket.readyState !== WebSocket.OPEN) return
+  socket.send(JSON.stringify({ type: 'control.ack', payload: { command_id: commandId, status, detail } }))
+}
+
+function sendRecordingCommand(type: 'control.arm' | 'recording.start' | 'recording.stop') {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     error.value = 'Řídicí kanál není připojený.'
     return
   }
-  socket.send(JSON.stringify({ type, payload: { requested_at: new Date().toISOString() } }))
+  const commandId = crypto.randomUUID()
+  activeCommandId.value = commandId
+  activeCommandType.value = type
+  controlAcks.value = Object.fromEntries(connectedDevices.value.map((device) => [device.device_id, { status: 'pending' }]))
+  window.clearTimeout(commandTimeout)
+  commandTimeout = window.setTimeout(() => {
+    for (const device of connectedDevices.value) {
+      if (controlAcks.value[device.device_id]?.status === 'pending') {
+        controlAcks.value[device.device_id] = { status: 'timeout', detail: 'Kamera neodpověděla do 5 sekund.' }
+      }
+    }
+  }, 5000)
+  socket.send(JSON.stringify({ type, payload: { command_id: commandId, requested_at: new Date().toISOString() } }))
 }
 
 async function prepareCamera() {
@@ -348,8 +406,8 @@ function handleOrientation(event: DeviceOrientationEvent) {
   }
 }
 
-async function startLocalRecording(requestDetails: Record<string, unknown> = {}) {
-  if (!mediaStream || recording.value || recordingStarting.value || recordingFinalizing.value || !session.value || !deviceId.value || role.value === 'director') return
+async function startLocalRecording(requestDetails: Record<string, unknown> = {}): Promise<boolean> {
+  if (!mediaStream || recording.value || recordingStarting.value || recordingFinalizing.value || !session.value || !deviceId.value || role.value === 'director') return false
   recordingStarting.value = true
   try {
     const cameraRole = role.value as Exclude<Role, 'director'>
@@ -417,15 +475,17 @@ async function startLocalRecording(requestDetails: Record<string, unknown> = {})
     recordTelemetry('recording_started')
     telemetryTimer = window.setInterval(() => recordTelemetry('clock_sample'), 1000)
     recording.value = true
+    return true
   } catch {
     error.value = 'Záznam se na tomto zařízení nepodařilo spustit.'
+    return false
   } finally {
     recordingStarting.value = false
   }
 }
 
-function stopLocalRecording() {
-  if (!mediaRecorder || mediaRecorder.state === 'inactive') return
+function stopLocalRecording(): boolean {
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') return false
   recordingFinalizing.value = true
   recordTelemetry('recording_stopped')
   window.clearInterval(telemetryTimer)
@@ -433,6 +493,7 @@ function stopLocalRecording() {
   if (geolocationWatchId !== undefined) navigator.geolocation.clearWatch(geolocationWatchId)
   mediaRecorder.stop()
   recording.value = false
+  return true
 }
 
 async function refreshLocalCaptures() {
@@ -524,6 +585,7 @@ onBeforeUnmount(() => {
   const videoTrack = mediaStream?.getVideoTracks()[0]
   if (videoTrack) void videoTrack.applyConstraints({ advanced: [{ torch: false } as MediaTrackConstraintSet] }).catch(() => undefined)
   window.clearInterval(telemetryTimer)
+  window.clearTimeout(commandTimeout)
 })
 </script>
 
@@ -573,13 +635,17 @@ onBeforeUnmount(() => {
         <HotspotPanel />
         <h3>Zařízení ({{ devices.length }})</h3>
         <div class="record-controls">
-          <button v-if="session.state !== 'recording'" :disabled="!devices.some(device => device.connected)" @click="sendRecordingCommand('recording.start')">● Spustit záznam</button>
+          <template v-if="session.state !== 'recording'">
+            <button class="secondary" :disabled="!connectedDevices.length" @click="sendRecordingCommand('control.arm')">1. ARM · připravit kamery</button>
+            <button :disabled="!allCamerasArmed" @click="sendRecordingCommand('recording.start')">2. ● Spustit záznam</button>
+          </template>
           <button v-else class="stop" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
         </div>
+        <p v-if="activeCommandType && connectedDevices.length" class="muted">Potvrzení povelu: {{ Object.values(controlAcks).filter(ack => !['pending', 'timeout', 'error'].includes(ack.status)).length }}/{{ connectedDevices.length }}</p>
         <button class="clap-button" :disabled="!devices.some(device => device.role === 'main_camera' && device.connected)" @click="triggerClap">Spustit světelnou klapku</button>
         <p v-if="!devices.length" class="muted">Čekám na připojení prvního telefonu…</p>
         <article v-for="device in devices" :key="device.device_id" class="device">
-          <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small></div>
+          <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small><small v-if="controlAcks[device.device_id]" :class="{ 'ack-error': ['error', 'timeout'].includes(controlAcks[device.device_id].status) }">{{ ackLabel(controlAcks[device.device_id]) }}</small></div>
           <span :class="['dot', { offline: !device.connected }]">{{ device.connected ? (device.state === 'uploading' ? `přenos ${deviceUploadProgress[device.device_id] ?? 0} %` : device.state) : 'odpojeno' }}</span>
         </article>
         <div class="media-heading"><h3>Záznamy ({{ sessionMedia.length }})</h3><button class="small" @click="loadSessionMedia">Obnovit</button></div>
@@ -592,7 +658,10 @@ onBeforeUnmount(() => {
         <video ref="preview" class="preview" autoplay muted playsinline></video>
         <div class="ready"><span>✓</span><div><strong>Zařízení je připravené</strong><small>{{ deviceName }}</small></div></div>
         <div v-if="role === 'main_camera'" class="record-controls">
-          <button v-if="session.state !== 'recording'" :disabled="!cameraReady || recordingStarting || recordingFinalizing" @click="sendRecordingCommand('recording.start')">● Spustit záznam</button>
+          <template v-if="session.state !== 'recording'">
+            <button v-if="session.state !== 'armed'" class="secondary" :disabled="!cameraReady" @click="sendRecordingCommand('control.arm')">1. ARM · připravit kamery</button>
+            <button v-else :disabled="!cameraReady || recordingStarting || recordingFinalizing" @click="sendRecordingCommand('recording.start')">2. ● Spustit záznam</button>
+          </template>
           <button v-else class="stop" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
         </div>
         <p v-else-if="recording" class="recording-indicator">● Probíhá záznam</p>

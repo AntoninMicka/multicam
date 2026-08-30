@@ -155,10 +155,6 @@ class SessionStore:
             if session is None:
                 raise SessionNotFoundError(session_id)
             session.state = state
-            device_state = DeviceState.RECORDING if state == SessionState.RECORDING else DeviceState.STORED
-            for device in session.devices.values():
-                if device.connected:
-                    device.state = device_state
             self._persist(session)
             return session.model_copy(deep=True)
 

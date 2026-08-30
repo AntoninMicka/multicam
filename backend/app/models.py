@@ -12,6 +12,7 @@ def utc_now() -> datetime:
 class DeviceState(StrEnum):
     DISCONNECTED = "disconnected"
     READY = "ready"
+    ARMED = "armed"
     RECORDING = "recording"
     STORED = "stored"
     UPLOADING = "uploading"
