@@ -29,6 +29,14 @@ def test_health() -> None:
     assert asyncio.run(request("GET", "/api/health")).json() == {"status": "ok"}
 
 
+def test_hotspot_status(tmp_path, monkeypatch) -> None:
+    status_path = tmp_path / "hotspot.json"
+    status_path.write_text('{"active":true,"ssid":"MultiCam","app_url":"https://10.42.0.1:8000/"}')
+    monkeypatch.setenv("MULTICAM_HOTSPOT_STATUS", str(status_path))
+    response = asyncio.run(request("GET", "/api/hotspot"))
+    assert response.json()["ssid"] == "MultiCam"
+
+
 def test_create_session_and_register_device() -> None:
     response = asyncio.run(request("POST", "/api/sessions", json={"name": "Test"}))
     assert response.status_code == 201

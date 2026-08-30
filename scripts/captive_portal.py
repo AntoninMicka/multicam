@@ -11,17 +11,17 @@ class PortalHandler(BaseHTTPRequestHandler):
     ca_cert: Path | None = None
 
     def do_GET(self) -> None:
-        if self.path == "/local-ca.cert.pem" and self.ca_cert and self.ca_cert.is_file():
+        if self.path == "/local-ca.cert.crt" and self.ca_cert and self.ca_cert.is_file():
             content = self.ca_cert.read_bytes()
             self.send_response(200)
-            self.send_header("Content-Type", "application/x-pem-file")
-            self.send_header("Content-Disposition", 'attachment; filename="multicam-local-ca.pem"')
+            self.send_header("Content-Type", "application/x-x509-ca-cert")
+            self.send_header("Content-Disposition", 'attachment; filename="multicam-local-ca.crt"')
             self.send_header("Content-Length", str(len(content)))
             self.end_headers()
             self.wfile.write(content)
             return
 
-        ca_link = '<a class="secondary" href="/local-ca.cert.pem">Stáhnout lokální CA certifikát</a>' if self.ca_cert else ""
+        ca_link = '<a class="secondary" href="/local-ca.cert.crt">Stáhnout lokální CA certifikát</a>' if self.ca_cert else ""
         content = f"""<!doctype html>
 <html lang="cs"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MultiCam</title><style>
@@ -68,4 +68,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

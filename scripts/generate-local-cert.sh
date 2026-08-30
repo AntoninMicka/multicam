@@ -5,6 +5,7 @@ PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 CERT_DIR="${PROJECT_DIR}/certs"
 CA_KEY="${CERT_DIR}/local-ca.key.pem"
 CA_CERT="${CERT_DIR}/local-ca.cert.pem"
+CA_CERT_DER="${CERT_DIR}/local-ca.cert.crt"
 SERVER_KEY="${CERT_DIR}/server.key.pem"
 SERVER_CERT="${CERT_DIR}/server.cert.pem"
 SERVER_CSR="${CERT_DIR}/server.csr.pem"
@@ -29,6 +30,9 @@ if [[ ! -f "${CA_KEY}" || ! -f "${CA_CERT}" ]]; then
     -keyout "${CA_KEY}" -out "${CA_CERT}" -days 3650 \
     -subj '/CN=MultiCam Local CA/O=MultiCam'
   chmod 600 "${CA_KEY}"
+fi
+if [[ ! -f "${CA_CERT_DER}" || "${CA_CERT}" -nt "${CA_CERT_DER}" ]]; then
+  openssl x509 -in "${CA_CERT}" -outform DER -out "${CA_CERT_DER}"
 fi
 
 declare -a ip_addresses=("127.0.0.1")
@@ -84,4 +88,4 @@ openssl x509 -req -sha256 -in "${SERVER_CSR}" \
   -out "${SERVER_CERT}" -days 825 -extfile "${extensions_file}"
 chmod 600 "${SERVER_KEY}"
 
-printf '[multicam] Certifikát je připravený. Do telefonů nainstalujte:\n%s\n' "${CA_CERT}"
+printf '[multicam] Certifikát je připravený. Do telefonů nainstalujte:\n%s\n' "${CA_CERT_DER}"

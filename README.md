@@ -46,7 +46,7 @@ Další argumenty se předají přímo Uvicornu, například `./run.sh --reload`
 
 ### Lokální HTTPS certifikát
 
-Při prvním spuštění vznikne lokální certifikační autorita a serverový certifikát v ignorovaném adresáři `certs/`. Soubor `certs/local-ca.cert.pem` je potřeba nainstalovat jako důvěryhodnou CA do každého telefonu. Privátní soubor `certs/local-ca.key.pem` se nesmí kopírovat ani zveřejňovat.
+Při prvním spuštění vznikne lokální certifikační autorita a serverový certifikát v ignorovaném adresáři `certs/`. Soubor `certs/local-ca.cert.crt` je potřeba nainstalovat jako důvěryhodnou CA do každého telefonu. PEM varianta stejného veřejného certifikátu zůstává v `certs/local-ca.cert.pem`. Privátní soubor `certs/local-ca.key.pem` se nesmí kopírovat ani zveřejňovat.
 
 Serverový certifikát automaticky zahrnuje `localhost`, `127.0.0.1` a LAN adresy zjištěné při jeho vytvoření. Pokud je automatické zjištění nedostupné nebo se IP notebooku změnila, certifikát obnovte explicitně:
 
@@ -55,6 +55,24 @@ MULTICAM_CERT_IPS=192.168.1.10 ./scripts/generate-local-cert.sh --force
 ```
 
 Více adres lze oddělit čárkou. Pro jednorázové vývojové spuštění bez TLS lze použít `MULTICAM_HTTPS=0 ./run.sh`.
+
+### Izolovaný Wi‑Fi hotspot
+
+Na Linuxu s NetworkManagerem lze server i ostrovní AP spustit jedním příkazem:
+
+```bash
+./run-hotspot.sh
+```
+
+Wrapper si vyžádá oprávnění správce, vytvoří WPA2 síť `MultiCam`, nastaví notebook na `10.42.0.1`, spustí DHCP a wildcard DNS a firewallem zablokuje forwarding klientů do jiných sítí. HTTP požadavky a běžné kontroly captive portálu skončí na lokální úvodní stránce s odkazem na HTTPS aplikaci a instalačním CA certifikátem. Po ukončení serveru wrapper odstraní pouze vlastní síťový profil, DNS proces, captive portal a firewallovou tabulku.
+
+Název, heslo a rozhraní lze nastavit například takto:
+
+```bash
+MULTICAM_WIFI_IFACE=wlan0 MULTICAM_HOTSPOT_SSID=Nataceni MULTICAM_HOTSPOT_PASSWORD=bezpecne-heslo ./run-hotspot.sh
+```
+
+Režisérský pult po spuštění zobrazí QR pro připojení k Wi‑Fi a druhý QR s adresou aplikace. Výchozí síť je záměrně bez přístupu k internetu.
 
 ### Ruční spuštění
 
