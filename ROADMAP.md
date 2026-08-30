@@ -59,17 +59,17 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 - [x] Po dokončení ověřit počet bloků, velikost a SHA-256 videa i telemetrie.
 - [x] Server vrátí podepsané/identifikovatelné potvrzení o převzetí.
 - [x] Smazání v telefonu povolit až po potvrzení; výchozí chování má vyžadovat vědomé potvrzení uživatele.
-- [~] Zobrazit průběh, rychlost, zbývající čas a chyby jednotlivých telefonů (procenta a základní chyby jsou hotové, chybí rychlost a odhad času).
+- [x] Zobrazit na pultu průběh, rychlost, zbývající čas, počet automatických opakování a poslední chybu jednotlivých telefonů.
 
 **Hotovo, když:** přerušený přenos pokračuje bez ztráty dat a lokální kopie nezmizí před úspěšnou verifikací.
 
 ## 5. Laboratorní a síťové testy
 
 - [~] Unit testy schémat, stavového automatu, checksumů a opakovaných uploadů (existuje 6 backendových API testů včetně idempotentního uploadu a obnovy relace; pokrytí stavů a frontend chybí).
-- [ ] Integrační test celé relace s jedním telefonem, poté s pěti.
+- [~] Integrační test celé relace s jedním telefonem, poté s pěti (ověřeno: desktopový pult, notebook jako vedlejší a mobil jako hlavní kamera; bez zaznamenané chyby řízení či záznamu, automatický upload z mobilu jednou vyžadoval ruční opakování).
 - [ ] Test vypnutí Wi-Fi, pádu serveru, reloadu PWA, plného disku a vybití telefonu.
 - [ ] Změřit propustnost staršího AP a dobu přenosu reálných souborů.
-- [~] Ověřit současný upload; klienti nahrávají souběžně, ale chybí měření a případná fronta.
+- [~] Ověřit současný upload; klienti nahrávají souběžně a po selhání přenos automaticky opakují s exponenciálním odstupem, ale chybí měření propustnosti a případná fronta.
 - [ ] Ověřit teplotu, throttling a spotřebu baterie při cílové délce záznamu.
 - [ ] Archivovat protokol testu a přesné verze zařízení/aplikace.
 

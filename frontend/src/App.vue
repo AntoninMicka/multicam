@@ -44,7 +44,15 @@ const recordingUrl = ref('')
 const cameraReady = ref(false)
 const uploadProgress = ref<number | null>(null)
 const uploadVerified = ref(false)
-const deviceUploadProgress = ref<Record<string, number>>({})
+interface DeviceUploadStatus {
+  status: 'uploading' | 'retrying' | 'verified'
+  percent: number
+  speed_bps: number
+  eta_seconds: number | null
+  retries: number
+  error?: string
+}
+const deviceUploadStatus = ref<Record<string, DeviceUploadStatus>>({})
 const localCaptures = ref<LocalCapture[]>([])
 const availableSessions = ref<Session[]>([])
 const sessionMedia = ref<CaptureMedia[]>([])
@@ -62,6 +70,8 @@ let socket: WebSocket | null = null
 let commandTimeout: number | undefined
 let clockTimer: number | undefined
 let wakeLock: { release: () => Promise<void>; released?: boolean } | null = null
+const uploadRetryAttempts = new Map<string, number>()
+const uploadRetryTimers = new Map<string, number>()
 let flashTimer: number | undefined
 let torchTimer: number | undefined
 let mediaStream: MediaStream | null = null
@@ -161,6 +171,16 @@ function formatBytes(value: number | null): string {
   return `${(value / 1024 ** 3).toFixed(1)} GB`
 }
 
+function formatSpeed(value: number): string {
+  return value > 0 ? `${(value / 1024 / 1024).toFixed(1)} MB/s` : 'počítám…'
+}
+
+function formatEta(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '—'
+  if (value < 60) return `${Math.ceil(value)} s`
+  return `${Math.floor(value / 60)} min ${Math.ceil(value % 60)} s`
+}
+
 function permissionLabel(value: boolean | null): string {
   return value === true ? 'ano' : value === false ? 'ne' : 'nezjištěno'
 }
@@ -184,8 +204,9 @@ function connectSocket(id: string, cameraId?: string) {
     if (!cameraId) return
     sendClockPing()
     window.clearInterval(clockTimer)
-    clockTimer = window.setInterval(sendClockPing, 5000)
-  }
+      clockTimer = window.setInterval(sendClockPing, 5000)
+    }
+    if (cameraId) void retryPendingUploads()
   socket.onmessage = async (event) => {
     const message = JSON.parse(event.data)
     if (message.type === 'session.snapshot' || message.type === 'session.updated') {
@@ -204,6 +225,7 @@ function connectSocket(id: string, cameraId?: string) {
       const started = await startLocalRecording(message.payload)
       sendControlAck(message.payload.command_id, started ? 'started' : 'error', started ? undefined : error.value)
     }
+    if (message.type === 'recording.start' && role.value === 'director') deviceUploadStatus.value = {}
     if (message.type === 'recording.stop' && role.value !== 'director') {
       const stopped = stopLocalRecording()
       sendControlAck(message.payload.command_id, stopped ? 'stopped' : 'error', stopped ? undefined : 'Na zařízení neběžel záznam.')
@@ -223,7 +245,12 @@ function connectSocket(id: string, cameraId?: string) {
     }
     if (message.type === 'upload.progress') {
       const { device_id, received_chunks, total_chunks } = message.payload
-      deviceUploadProgress.value[device_id] = Math.round(received_chunks / total_chunks * 100)
+      if (!deviceUploadStatus.value[device_id]) {
+        deviceUploadStatus.value[device_id] = { status: 'uploading', percent: Math.round(received_chunks / total_chunks * 100), speed_bps: 0, eta_seconds: null, retries: 0 }
+      }
+    }
+    if (message.type === 'upload.client_status' && role.value === 'director') {
+      deviceUploadStatus.value[message.payload.device_id] = message.payload
     }
   }
   socket.onerror = () => (error.value = 'Spojení se serverem bylo přerušeno.')
@@ -613,10 +640,18 @@ async function uploadStoredCapture(capture: LocalCapture) {
     recordingUrl.value = URL.createObjectURL(localRecording)
     let videoProgress = 0
     let telemetryProgress = 0
+    const uploadStartedAt = performance.now()
+    const totalBytes = localRecording.size + telemetry.size
     const updateProgress = () => {
-      uploadProgress.value = Math.round(
-        (videoProgress * localRecording.size + telemetryProgress * telemetry.size) / (localRecording.size + telemetry.size),
-      )
+      const transferredBytes = (videoProgress / 100) * localRecording.size + (telemetryProgress / 100) * telemetry.size
+      uploadProgress.value = Math.round(transferredBytes / totalBytes * 100)
+      const elapsedSeconds = Math.max((performance.now() - uploadStartedAt) / 1000, 0.001)
+      const speed = transferredBytes / elapsedSeconds
+      sendUploadStatus({
+        status: 'uploading', percent: uploadProgress.value, speed_bps: speed,
+        eta_seconds: speed > 0 ? (totalBytes - transferredBytes) / speed : null,
+        retries: uploadRetryAttempts.get(capture.capture_id) ?? 0,
+      })
     }
     await Promise.all([
       uploadArtifact(session.value.session_id, deviceId.value, capture.capture_id, 'recording', localRecording, (progress) => {
@@ -630,12 +665,50 @@ async function uploadStoredCapture(capture: LocalCapture) {
     ])
     await setLocalCaptureState(capture.capture_id, 'verified')
     uploadVerified.value = true
+    sendUploadStatus({ status: 'verified', percent: 100, speed_bps: 0, eta_seconds: 0, retries: uploadRetryAttempts.get(capture.capture_id) ?? 0 })
+    uploadRetryAttempts.delete(capture.capture_id)
+    const retryTimer = uploadRetryTimers.get(capture.capture_id)
+    if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+    uploadRetryTimers.delete(capture.capture_id)
   } catch (reason) {
     await setLocalCaptureState(capture.capture_id, 'stored')
     error.value = reason instanceof Error ? `Přenos selhal: ${reason.message}` : 'Přenos záznamu selhal.'
+    const retries = scheduleUploadRetry(capture)
+    sendUploadStatus({ status: 'retrying', percent: uploadProgress.value ?? 0, speed_bps: 0, eta_seconds: null, retries, error: error.value })
   } finally {
     uploadingCaptureId.value = null
     await refreshLocalCaptures()
+  }
+}
+
+function sendUploadStatus(status: DeviceUploadStatus): void {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return
+  socket.send(JSON.stringify({ type: 'upload.client_status', payload: status }))
+}
+
+function scheduleUploadRetry(capture: LocalCapture): number {
+  if (uploadRetryTimers.has(capture.capture_id)) return uploadRetryAttempts.get(capture.capture_id) ?? 1
+  const attempt = (uploadRetryAttempts.get(capture.capture_id) ?? 0) + 1
+  uploadRetryAttempts.set(capture.capture_id, attempt)
+  const delay = Math.min(15_000 * 2 ** (attempt - 1), 120_000)
+  const timer = window.setTimeout(async () => {
+    uploadRetryTimers.delete(capture.capture_id)
+    if (!session.value || capture.session_id !== session.value.session_id || capture.device_id !== deviceId.value) return
+    const current = (await listLocalCaptures()).find((item) => item.capture_id === capture.capture_id)
+    if (current?.state === 'stored') await uploadStoredCapture(current)
+  }, delay)
+  uploadRetryTimers.set(capture.capture_id, timer)
+  return attempt
+}
+
+async function retryPendingUploads(): Promise<void> {
+  if (!session.value || !deviceId.value || uploadingCaptureId.value) return
+  const pending = (await listLocalCaptures()).filter((capture) =>
+    capture.state === 'stored' && capture.session_id === session.value?.session_id && capture.device_id === deviceId.value,
+  )
+  for (const capture of pending) {
+    if (uploadingCaptureId.value) break
+    await uploadStoredCapture(capture)
   }
 }
 
@@ -684,6 +757,7 @@ onBeforeUnmount(() => {
   window.clearInterval(telemetryTimer)
   window.clearInterval(clockTimer)
   window.clearTimeout(commandTimeout)
+  uploadRetryTimers.forEach((timer) => window.clearTimeout(timer))
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   void releaseWakeLock()
 })
@@ -749,8 +823,8 @@ onBeforeUnmount(() => {
         <button class="clap-button" :disabled="!devices.some(device => device.role === 'main_camera' && device.connected)" @click="triggerClap">Spustit světelnou klapku</button>
         <p v-if="!devices.length" class="muted">Čekám na připojení prvního telefonu…</p>
         <article v-for="device in devices" :key="device.device_id" class="device">
-          <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small><small v-if="clockMetrics[device.device_id]">Hodiny: offset {{ clockMetrics[device.device_id].offset_ms.toFixed(1) }} ms · RTT {{ clockMetrics[device.device_id].rtt_ms.toFixed(1) }} ms</small><small v-if="controlAcks[device.device_id]" :class="{ 'ack-error': ['error', 'timeout'].includes(controlAcks[device.device_id].status) }">{{ ackLabel(controlAcks[device.device_id]) }}</small></div>
-          <span :class="['dot', { offline: !device.connected }]">{{ device.connected ? (device.state === 'uploading' ? `přenos ${deviceUploadProgress[device.device_id] ?? 0} %` : device.state) : 'odpojeno' }}</span>
+          <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small><small v-if="clockMetrics[device.device_id]">Hodiny: offset {{ clockMetrics[device.device_id].offset_ms.toFixed(1) }} ms · RTT {{ clockMetrics[device.device_id].rtt_ms.toFixed(1) }} ms</small><small v-if="deviceUploadStatus[device.device_id]">Přenos: {{ formatSpeed(deviceUploadStatus[device.device_id].speed_bps) }} · zbývá {{ formatEta(deviceUploadStatus[device.device_id].eta_seconds) }} · opakování {{ deviceUploadStatus[device.device_id].retries }}</small><small v-if="deviceUploadStatus[device.device_id]?.error" class="ack-error">{{ deviceUploadStatus[device.device_id].error }}</small><small v-if="controlAcks[device.device_id]" :class="{ 'ack-error': ['error', 'timeout'].includes(controlAcks[device.device_id].status) }">{{ ackLabel(controlAcks[device.device_id]) }}</small></div>
+          <span :class="['dot', { offline: !device.connected || deviceUploadStatus[device.device_id]?.status === 'retrying' }]">{{ !device.connected ? 'odpojeno' : deviceUploadStatus[device.device_id] ? `${deviceUploadStatus[device.device_id].status === 'retrying' ? 'čeká na retry' : deviceUploadStatus[device.device_id].status === 'verified' ? 'ověřeno' : 'přenos'} ${deviceUploadStatus[device.device_id].percent} %` : device.state }}</span>
         </article>
         <div class="media-heading"><h3>Záznamy ({{ sessionMedia.length }})</h3><div class="heading-actions"><button class="small secondary" @click="downloadSessionReport">Stáhnout report</button><button class="small" @click="loadSessionMedia">Obnovit</button></div></div>
         <p v-if="!sessionMedia.length" class="muted">Relace zatím nemá ověřené záznamy.</p>

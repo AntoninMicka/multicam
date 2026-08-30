@@ -250,6 +250,8 @@ async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID
                 continue
             if message.type == "clock.report" and device_id is not None:
                 message.payload["device_id"] = str(device_id)
+            elif message.type == "upload.client_status" and device_id is not None:
+                message.payload["device_id"] = str(device_id)
             elif message.type == "control.arm":
                 session = await store.set_state(session_id, SessionState.ARMED)
                 await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
