@@ -67,6 +67,10 @@ export function getSessionReport(sessionId: string): Promise<Record<string, unkn
   return fetch(`/api/sessions/${sessionId}/report`).then(json<Record<string, unknown>>)
 }
 
+export function analyzeSessionClaps(sessionId: string): Promise<{ captures: Record<string, { status: string }> }> {
+  return fetch(`/api/sessions/${sessionId}/analyze-claps`, { method: 'POST' }).then(json<{ captures: Record<string, { status: string }> }>)
+}
+
 export function deleteServerCapture(sessionId: string, deviceId: string, captureId: string): Promise<{ deleted: boolean }> {
   return fetch(`/api/media/${sessionId}/${deviceId}/${captureId}`, { method: 'DELETE' }).then(json<{ deleted: boolean }>)
 }

@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from .models import CaptureMedia, Session, UploadCreate, UploadReceipt, UploadStatus
+from .clap import detect_flash
 
 
 class UploadError(Exception):
@@ -271,6 +272,11 @@ class UploadService:
         return sum(self.delete_capture(session.session_id, media.device_id, media.capture_id) for media in captures)
 
     def build_report(self, session: Session) -> dict:
+        analysis_path = self.root / str(session.session_id) / "analysis.json"
+        try:
+            analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            analysis = {"captures": {}}
         expected_devices = {
             str(device.device_id): {"name": device.name, "role": device.role.value}
             for device in session.devices.values()
@@ -301,6 +307,7 @@ class UploadService:
                 "role": media.role.value,
                 "mime_type": media.mime_type,
                 "artifacts": artifacts,
+                "sync_analysis": analysis.get("captures", {}).get(str(media.capture_id)),
             })
         for take in takes.values():
             received = {stream["device_id"] for stream in take["streams"]}
@@ -324,6 +331,34 @@ class UploadService:
         report_path = self.root / str(session.session_id) / "report.json"
         self._write_metadata(report_path, report)
         return report
+
+    def analyze_claps(self, session: Session) -> dict:
+        captures: dict[str, dict] = {}
+        for media in self.list_media(session):
+            if not media.telemetry_url:
+                captures[str(media.capture_id)] = {"status": "not_found", "detail": "Chybí telemetrie."}
+                continue
+            telemetry_path = self.artifact_path(session.session_id, media.device_id, media.capture_id, "telemetry")
+            expected = None
+            for line in telemetry_path.read_text(encoding="utf-8").splitlines():
+                sample = json.loads(line)
+                if sample.get("event") == "sync_marker" and sample.get("recording_offset_ms") is not None:
+                    expected = float(sample["recording_offset_ms"]) / 1000
+                    break
+            if expected is None:
+                captures[str(media.capture_id)] = {"status": "not_found", "detail": "Telemetrie neobsahuje sync_marker."}
+                continue
+            video_path = self.artifact_path(session.session_id, media.device_id, media.capture_id, "recording")
+            captures[str(media.capture_id)] = {"expected_seconds": expected, **detect_flash(video_path, expected)}
+        detected = [item["flash_seconds"] for item in captures.values() if item.get("status") == "detected"]
+        reference = min(detected) if detected else None
+        if reference is not None:
+            for item in captures.values():
+                if item.get("flash_seconds") is not None:
+                    item["timeline_correction_seconds"] = round(reference - item["flash_seconds"], 4)
+        analysis = {"schema_version": "1.0", "reference_flash_seconds": reference, "captures": captures}
+        self._write_metadata(self.root / str(session.session_id) / "analysis.json", analysis)
+        return analysis
 
 
 uploads = UploadService()

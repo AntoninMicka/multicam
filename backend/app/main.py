@@ -187,6 +187,15 @@ async def get_session_report(session_id: UUID) -> dict:
     return uploads.build_report(session)
 
 
+@app.post("/api/sessions/{session_id}/analyze-claps")
+async def analyze_session_claps(session_id: UUID) -> dict:
+    try:
+        session = await store.get(session_id)
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Session not found") from error
+    return await asyncio.to_thread(uploads.analyze_claps, session)
+
+
 @app.get("/api/media/{session_id}/{device_id}/{capture_id}/video", response_class=FileResponse)
 async def get_recording_media(session_id: UUID, device_id: UUID, capture_id: UUID) -> FileResponse:
     try:
