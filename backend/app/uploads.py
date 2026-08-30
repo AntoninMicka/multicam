@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from .models import CaptureMedia, Session, UploadCreate, UploadReceipt, UploadStatus
 
@@ -175,6 +175,26 @@ class UploadService:
                 completed.add(metadata.get("kind", "recording"))
         return completed == {"recording", "telemetry"}
 
+    def _take_id(self, recording: dict, telemetry: dict | None) -> UUID | None:
+        if recording.get("take_id"):
+            return UUID(recording["take_id"])
+        if not telemetry or not telemetry.get("receipt"):
+            return None
+        path = self.root / telemetry["receipt"]["file_path"]
+        if not path.is_file() or not path.resolve().is_relative_to(self.root):
+            return None
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                sample = json.loads(line)
+                if sample.get("event") != "sync_marker":
+                    continue
+                requested_at = sample.get("details", {}).get("requested_at")
+                if requested_at:
+                    return uuid5(NAMESPACE_URL, f"multicam-clap:{requested_at}")
+        except (OSError, json.JSONDecodeError, TypeError):
+            return None
+        return None
+
     def list_media(self, session: Session) -> list[CaptureMedia]:
         result: list[CaptureMedia] = []
         for device in session.devices.values():
@@ -198,6 +218,7 @@ class UploadService:
                     telemetry_url = f"/api/media/{session.session_id}/{device.device_id}/{capture_id}/telemetry"
                 result.append(CaptureMedia(
                     capture_id=UUID(capture_id),
+                    take_id=self._take_id(recording, artifacts.get("telemetry")),
                     device_id=device.device_id,
                     device_name=device.name,
                     role=device.role,

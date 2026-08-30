@@ -1,0 +1,68 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import type { CaptureMedia } from './api'
+import CapturePlayer from './CapturePlayer.vue'
+
+const props = defineProps<{ captures: CaptureMedia[] }>()
+const players = ref<Array<InstanceType<typeof CapturePlayer>>>([])
+const playing = ref(false)
+const playbackError = ref('')
+
+function setPlayer(player: unknown, index: number): void {
+  if (player) players.value[index] = player as InstanceType<typeof CapturePlayer>
+}
+
+async function togglePlayback(): Promise<void> {
+  playbackError.value = ''
+  if (playing.value) {
+    players.value.forEach((player) => player.pause())
+    playing.value = false
+    return
+  }
+  const results = await Promise.allSettled(players.value.map((player) => player.playFromStart()))
+  const failed = results.filter((result) => result.status === 'rejected')
+  playing.value = failed.length < results.length
+  if (failed.length) {
+    const firstReason = failed[0].status === 'rejected' ? failed[0].reason : null
+    const detail = firstReason instanceof DOMException ? firstReason.message : ''
+    playbackError.value = `${failed.length} z ${results.length} videí se nepodařilo spustit${detail ? `: ${detail}` : '.'}`
+  }
+}
+
+function formattedTime(): string {
+  const createdAt = props.captures.find((capture) => capture.created_at)?.created_at
+  return createdAt ? new Date(createdAt).toLocaleString() : 'čas není známý'
+}
+</script>
+
+<template>
+  <section class="capture-group">
+    <header>
+      <div>
+        <strong>Klapka · {{ formattedTime() }}</strong>
+        <small>{{ captures.length }} {{ captures.length === 1 ? 'kamera' : 'kamery' }}</small>
+      </div>
+      <button class="small" @click="togglePlayback">{{ playing ? '❚❚ Pozastavit vše' : '▶ Přehrát vše' }}</button>
+    </header>
+    <p v-if="playbackError" class="error">{{ playbackError }}</p>
+    <div class="stream-matrix">
+      <CapturePlayer
+        v-for="(capture, index) in captures"
+        :key="capture.capture_id"
+        :ref="(player) => setPlayer(player, index)"
+        :capture="capture"
+        :muted="capture.role !== 'main_camera'"
+      />
+    </div>
+  </section>
+</template>
+
+<style scoped>
+.capture-group { padding: 16px; border: 1px solid #405170; border-radius: 18px; background: #111b2d; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+header div { display: grid; gap: 4px; }
+small { color: #8391a7; }
+.stream-matrix { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 14px; }
+.error { margin-bottom: 12px; }
+@media (max-width: 520px) { header { align-items: stretch; flex-direction: column; } }
+</style>

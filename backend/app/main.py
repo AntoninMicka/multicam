@@ -3,7 +3,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -209,6 +209,7 @@ async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID
         while True:
             message = SocketMessage.model_validate(await websocket.receive_json())
             if message.type == "recording.start":
+                message.payload["take_id"] = str(uuid4())
                 session = await store.set_state(session_id, SessionState.RECORDING)
                 await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
             elif message.type == "recording.stop":

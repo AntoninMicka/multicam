@@ -23,6 +23,7 @@ export interface UploadReceipt {
 
 export interface CaptureMedia {
   capture_id: string
+  take_id: string | null
   device_id: string
   device_name: string
   role: Device['role']
@@ -132,6 +133,7 @@ export async function uploadArtifact(
   kind: 'recording' | 'telemetry',
   artifact: Blob,
   onProgress: (percent: number) => void,
+  takeId?: string,
 ): Promise<UploadReceipt> {
   const chunkSize = 4 * 1024 * 1024
   const totalChunks = Math.ceil(artifact.size / chunkSize)
@@ -143,6 +145,7 @@ export async function uploadArtifact(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       capture_id: captureId,
+      take_id: takeId,
       kind,
       file_name: kind === 'telemetry' ? 'timing.jsonl' : `recording.${extension}`,
       mime_type: artifact.type || 'application/octet-stream',

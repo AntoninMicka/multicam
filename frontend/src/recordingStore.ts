@@ -5,6 +5,7 @@ export type LocalCaptureState = 'recording' | 'stored' | 'uploading' | 'verified
 
 export interface LocalCapture {
   capture_id: string
+  take_id?: string
   session_id: string
   device_id: string
   role: string

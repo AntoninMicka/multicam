@@ -2,8 +2,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { getTelemetry, type CaptureMedia, type TelemetrySample } from './api'
 
-const props = defineProps<{ capture: CaptureMedia }>()
+const props = withDefaults(defineProps<{ capture: CaptureMedia; muted?: boolean }>(), { muted: false })
 const samples = ref<TelemetrySample[]>([])
+const video = ref<HTMLVideoElement | null>(null)
 const currentTimeMs = ref(0)
 const loadingError = ref('')
 
@@ -37,6 +38,18 @@ const current = computed<TelemetrySample | null>(() => {
 function number(value: number | null | undefined, digits = 2): string {
   return value === null || value === undefined ? '—' : value.toFixed(digits)
 }
+
+async function playFromStart(): Promise<void> {
+  if (!video.value) return
+  video.value.currentTime = 0
+  await video.value.play()
+}
+
+function pause(): void {
+  video.value?.pause()
+}
+
+defineExpose({ playFromStart, pause })
 </script>
 
 <template>
@@ -45,7 +58,7 @@ function number(value: number | null | undefined, digits = 2): string {
       <div><strong>{{ capture.device_name }}</strong><small>{{ capture.role }}</small></div>
       <small>{{ (capture.size_bytes / 1024 / 1024).toFixed(1) }} MB</small>
     </header>
-    <video :src="capture.video_url" controls playsinline preload="metadata" @timeupdate="currentTimeMs = ($event.target as HTMLVideoElement).currentTime * 1000"></video>
+    <video ref="video" :src="capture.video_url" :muted="muted" controls playsinline preload="auto" @timeupdate="currentTimeMs = ($event.target as HTMLVideoElement).currentTime * 1000"></video>
     <p v-if="loadingError" class="telemetry-error">{{ loadingError }}</p>
     <dl v-else class="telemetry-values">
       <div><dt>čas</dt><dd>{{ (currentTimeMs / 1000).toFixed(2) }} s</dd></div>

@@ -143,7 +143,10 @@ def test_chunked_upload_is_idempotent_and_verified(tmp_path) -> None:
     assert (uploads.root / receipt["file_path"]).read_bytes() == content
     assert asyncio.run(request("POST", complete_url)).json()["receipt_id"] == receipt["receipt_id"]
 
-    telemetry = b'{"schema_version":"1.0","event":"recording_started","monotonic_ms":1}\n'
+    telemetry = (
+        b'{"schema_version":"1.0","event":"recording_started","monotonic_ms":1}\n'
+        b'{"schema_version":"1.0","event":"sync_marker","details":{"requested_at":"2026-08-30T12:00:00Z"}}\n'
+    )
     telemetry_digest = hashlib.sha256(telemetry).hexdigest()
     telemetry_upload = asyncio.run(request("POST", base, json={
         "capture_id": receipt["capture_id"],
@@ -168,6 +171,7 @@ def test_chunked_upload_is_idempotent_and_verified(tmp_path) -> None:
     media = asyncio.run(request("GET", f"/api/sessions/{session['session_id']}/media")).json()
     assert len(media) == 1
     assert media[0]["capture_id"] == receipt["capture_id"]
+    assert media[0]["take_id"] is not None
     assert uploads.artifact_path(
         UUID(session["session_id"]), UUID(device["device_id"]), UUID(receipt["capture_id"]), "recording"
     ).read_bytes() == content

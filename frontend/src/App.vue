@@ -12,7 +12,7 @@ import {
   type CaptureMedia,
   type DeviceCapabilities,
 } from './api'
-import CapturePlayer from './CapturePlayer.vue'
+import CaptureGroup from './CaptureGroup.vue'
 import HotspotPanel from './HotspotPanel.vue'
 import {
   appendRecordingChunk,
@@ -101,6 +101,20 @@ interface TelemetryEvent {
 }
 
 const devices = computed(() => Object.values(session.value?.devices ?? {}))
+const captureGroups = computed(() => {
+  const groups = new Map<string, CaptureMedia[]>()
+  for (const capture of sessionMedia.value) {
+    // Starší záznamy nemají identifikátor společné klapky, proto zůstávají
+    // samostatně a nemohou být omylem spojeny s jiným natáčením.
+    const key = capture.take_id ?? `legacy-${capture.capture_id}`
+    const group = groups.get(key) ?? []
+    group.push(capture)
+    groups.set(key, group)
+  }
+  return [...groups.entries()]
+    .map(([takeId, captures]) => ({ takeId, captures }))
+    .sort((left, right) => (right.captures[0]?.created_at ?? '').localeCompare(left.captures[0]?.created_at ?? ''))
+})
 
 async function readCapabilities(): Promise<DeviceCapabilities> {
   const estimate = await navigator.storage?.estimate?.().catch(() => undefined)
@@ -354,6 +368,7 @@ async function startLocalRecording(requestDetails: Record<string, unknown> = {})
     const settings = mediaStream.getVideoTracks()[0]?.getSettings() as (MediaTrackSettings & { zoom?: number }) | undefined
     const localCapture: LocalCapture = {
       capture_id: captureId,
+      take_id: typeof requestDetails.take_id === 'string' ? requestDetails.take_id : undefined,
       session_id: session.value.session_id,
       device_id: deviceId.value,
       role: cameraRole,
@@ -451,11 +466,11 @@ async function uploadStoredCapture(capture: LocalCapture) {
       uploadArtifact(session.value.session_id, deviceId.value, capture.capture_id, 'recording', localRecording, (progress) => {
         videoProgress = progress
         updateProgress()
-      }),
+      }, capture.take_id),
       uploadArtifact(session.value.session_id, deviceId.value, capture.capture_id, 'telemetry', telemetry, (progress) => {
         telemetryProgress = progress
         updateProgress()
-      }),
+      }, capture.take_id),
     ])
     await setLocalCaptureState(capture.capture_id, 'verified')
     uploadVerified.value = true
@@ -569,8 +584,8 @@ onBeforeUnmount(() => {
         </article>
         <div class="media-heading"><h3>Záznamy ({{ sessionMedia.length }})</h3><button class="small" @click="loadSessionMedia">Obnovit</button></div>
         <p v-if="!sessionMedia.length" class="muted">Relace zatím nemá ověřené záznamy.</p>
-        <div v-else class="stream-matrix">
-          <CapturePlayer v-for="capture in sessionMedia" :key="capture.capture_id" :capture="capture" />
+        <div v-else class="take-list">
+          <CaptureGroup v-for="group in captureGroups" :key="group.takeId" :captures="group.captures" />
         </div>
       </template>
       <template v-else>

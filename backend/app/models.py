@@ -75,6 +75,7 @@ class SocketMessage(BaseModel):
 
 class UploadCreate(BaseModel):
     capture_id: UUID = Field(default_factory=uuid4)
+    take_id: UUID | None = None
     kind: str = Field(default="recording", pattern=r"^(recording|telemetry)$")
     file_name: str = Field(min_length=1, max_length=160)
     mime_type: str = Field(min_length=1, max_length=120)
@@ -105,6 +106,7 @@ class UploadReceipt(BaseModel):
 
 class CaptureMedia(BaseModel):
     capture_id: UUID
+    take_id: UUID | None = None
     device_id: UUID
     device_name: str
     role: DeviceRole

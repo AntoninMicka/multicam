@@ -45,5 +45,5 @@ button.session-item { display: flex; align-items: center; justify-content: space
 .session-item small { font-weight: 500; }
 .media-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 30px; }
 .media-heading h3 { margin: 0; }
-.stream-matrix { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px; margin-top: 14px; }
+.take-list { display: grid; gap: 22px; margin-top: 14px; }
 @media (max-width: 520px) { main { padding-top: 28px; } .session-heading { align-items: flex-start; } }
