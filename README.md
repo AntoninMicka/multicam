@@ -123,7 +123,8 @@ dalších prací jsou vedené v [roadmapě](ROADMAP.md), zejména potvrzování 
 měření časového offsetu, odolnost mobilního záznamu a terénní integrační testy.
 
 Před připojením kamery lze zvolit profil **Kompatibilní** (640×480/24),
-**Vyvážený** (1280×720/30, doporučený) nebo **Kvalitní** (1920×1080/30).
+**Vyvážený** (1280×720/30, doporučený) nebo **Vysoce kvalitní (4K)**
+(3840×2160/30 s automatickým fallbackem na nižší podporované rozlišení).
 Prohlížeč z nabídky profilu vybere podporovaný WebM/MP4 kodek a aplikace následně
 zobrazí a uloží skutečně dosažené rozlišení, FPS a MIME typ.
 

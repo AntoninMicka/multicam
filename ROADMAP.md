@@ -11,7 +11,7 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 - [ ] Sepsat cílové telefony, OS, prohlížeče, rozlišení, kodeky a volné místo.
 - [ ] Ověřit `getUserMedia`, `MediaRecorder`, IndexedDB, GPS a `DeviceOrientation` na každém telefonu.
 - [ ] Ověřit oprávnění senzorů, zejména explicitní souhlas na iOS.
-- [x] Nabídnout omezené profily podle výkonu zařízení: kompatibilní 640×480/24, doporučený 720p/30 a kvalitní 1080p/30; skutečně dosažené parametry vždy uložit.
+- [x] Nabídnout omezené profily podle výkonu zařízení: kompatibilní 640×480/24, doporučený 720p/30 a vysoce kvalitní 4K/30 s bezpečným fallbackem zařízení; skutečně dosažené parametry vždy uložit.
 - [~] Připravit lokální HTTPS (generování CA a serverového certifikátu je hotové; zbývá ověřit instalaci a důvěru na všech cílových telefonech).
 - [ ] Změřit dostupné místo a odhadnout velikost jedné relace s bezpečnostní rezervou.
 

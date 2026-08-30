@@ -34,7 +34,7 @@ type VideoProfileId = 'compatible' | 'balanced' | 'quality'
 const VIDEO_PROFILES: Record<VideoProfileId, { label: string; description: string; width: number; height: number; fps: number; mimeTypes: string[] }> = {
   compatible: { label: 'Kompatibilní', description: '640×480 · 24 FPS · nejnižší zátěž', width: 640, height: 480, fps: 24, mimeTypes: ['video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'] },
   balanced: { label: 'Vyvážený', description: '1280×720 · 30 FPS · doporučeno', width: 1280, height: 720, fps: 30, mimeTypes: ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4'] },
-  quality: { label: 'Kvalitní', description: '1920×1080 · 30 FPS · vyšší nároky', width: 1920, height: 1080, fps: 30, mimeTypes: ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'] },
+  quality: { label: 'Vysoce kvalitní (4K)', description: '3840×2160 · 30 FPS · maximální nároky', width: 3840, height: 2160, fps: 30, mimeTypes: ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'] },
 }
 const role = ref<Role | null>(null)
 const archiveOpen = ref(false)
