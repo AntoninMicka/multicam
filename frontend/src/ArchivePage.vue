@@ -115,7 +115,7 @@ onMounted(loadArchive)
 </template>
 
 <style scoped>
-.archive-page { width: min(1200px, calc(100vw - 32px)); margin-left: 50%; transform: translateX(-50%); }
+.archive-page { width: 100%; }
 .archive-nav, .archive-group > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .archive-nav .back { margin: 0; }
 .archive-groups { display: grid; gap: 22px; margin-top: 22px; }

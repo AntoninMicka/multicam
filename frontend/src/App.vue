@@ -835,7 +835,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main>
+  <main :class="{ 'director-layout': role === 'director' }">
     <header><span class="eyebrow">lokální capture systém</span><h1>MultiCam</h1></header>
 
     <section v-if="!role" class="card role-picker">
@@ -894,11 +894,13 @@ onBeforeUnmount(() => {
         <p v-if="activeCommandType && connectedDevices.length" class="muted">Potvrzení povelu: {{ Object.values(controlAcks).filter(ack => !['pending', 'timeout', 'error'].includes(ack.status)).length }}/{{ connectedDevices.length }}</p>
         <button class="clap-button" :disabled="!devices.some(device => device.role === 'main_camera' && device.connected)" @click="triggerClap">Spustit identifikační klapku</button>
         <p v-if="!devices.length" class="muted">Čekám na připojení prvního telefonu…</p>
-        <article v-for="device in devices" :key="device.device_id" class="device">
-          <img v-if="previewFrames[device.device_id]" class="live-preview" :src="previewFrames[device.device_id].data_url" :alt="`Živý náhled ${device.name}`" />
-          <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small v-if="previewFrames[device.device_id]">Náhled {{ new Date(previewFrames[device.device_id].captured_at).toLocaleTimeString() }}</small><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small><small v-if="clockMetrics[device.device_id]">Hodiny: offset {{ clockMetrics[device.device_id].offset_ms.toFixed(1) }} ms · RTT {{ clockMetrics[device.device_id].rtt_ms.toFixed(1) }} ms</small><small v-if="deviceUploadStatus[device.device_id]">Přenos: {{ formatSpeed(deviceUploadStatus[device.device_id].speed_bps) }} · zbývá {{ formatEta(deviceUploadStatus[device.device_id].eta_seconds) }} · opakování {{ deviceUploadStatus[device.device_id].retries }}</small><small v-if="deviceUploadStatus[device.device_id]?.error" class="ack-error">{{ deviceUploadStatus[device.device_id].error }}</small><small v-if="controlAcks[device.device_id]" :class="{ 'ack-error': ['error', 'timeout'].includes(controlAcks[device.device_id].status) }">{{ ackLabel(controlAcks[device.device_id]) }}</small></div>
-          <span :class="['dot', { offline: !device.connected || deviceUploadStatus[device.device_id]?.status === 'retrying' }]">{{ !device.connected ? 'odpojeno' : deviceUploadStatus[device.device_id] ? `${deviceUploadStatus[device.device_id].status === 'retrying' ? 'čeká na retry' : deviceUploadStatus[device.device_id].status === 'verified' ? 'ověřeno' : 'přenos'} ${deviceUploadStatus[device.device_id].percent} %` : device.state }}</span>
-        </article>
+        <div class="device-grid">
+          <article v-for="device in devices" :key="device.device_id" class="device">
+            <img v-if="previewFrames[device.device_id]" class="live-preview" :src="previewFrames[device.device_id].data_url" :alt="`Živý náhled ${device.name}`" />
+            <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small v-if="previewFrames[device.device_id]">Náhled {{ new Date(previewFrames[device.device_id].captured_at).toLocaleTimeString() }}</small><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small><small v-if="clockMetrics[device.device_id]">Hodiny: offset {{ clockMetrics[device.device_id].offset_ms.toFixed(1) }} ms · RTT {{ clockMetrics[device.device_id].rtt_ms.toFixed(1) }} ms</small><small v-if="deviceUploadStatus[device.device_id]">Přenos: {{ formatSpeed(deviceUploadStatus[device.device_id].speed_bps) }} · zbývá {{ formatEta(deviceUploadStatus[device.device_id].eta_seconds) }} · opakování {{ deviceUploadStatus[device.device_id].retries }}</small><small v-if="deviceUploadStatus[device.device_id]?.error" class="ack-error">{{ deviceUploadStatus[device.device_id].error }}</small><small v-if="controlAcks[device.device_id]" :class="{ 'ack-error': ['error', 'timeout'].includes(controlAcks[device.device_id].status) }">{{ ackLabel(controlAcks[device.device_id]) }}</small></div>
+            <span :class="['dot', { offline: !device.connected || deviceUploadStatus[device.device_id]?.status === 'retrying' }]">{{ !device.connected ? 'odpojeno' : deviceUploadStatus[device.device_id] ? `${deviceUploadStatus[device.device_id].status === 'retrying' ? 'čeká na retry' : deviceUploadStatus[device.device_id].status === 'verified' ? 'ověřeno' : 'přenos'} ${deviceUploadStatus[device.device_id].percent} %` : device.state }}</span>
+          </article>
+        </div>
         <div class="media-heading"><h3>Záznamy ({{ sessionMedia.length }})</h3><div class="heading-actions"><button class="small secondary" :disabled="analyzingClaps || !sessionMedia.length" @click="analyzeClaps">{{ analyzingClaps ? 'Analyzuji…' : 'Najít klapky' }}</button><button class="small secondary" @click="downloadSessionReport">Stáhnout report</button><button class="small" @click="loadSessionMedia">Obnovit</button></div></div>
         <p v-if="clapAnalysisMessage" class="muted">{{ clapAnalysisMessage }}</p>
         <p v-if="!sessionMedia.length" class="muted">Relace zatím nemá ověřené záznamy.</p>
