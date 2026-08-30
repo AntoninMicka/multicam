@@ -43,6 +43,7 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 - [x] Měřit offset a round-trip time hodin mezi telefony a serverem opakovaným handshake; hodnoty zobrazovat na pultu a ukládat do telemetrie záznamu.
 - [~] Ukládat plánovaný i skutečný lokální čas startu/stopu (ukládá se čas přijetí povelu, lokální monotónní i UTC čas; chybí plánovaný start a síťová korekce).
 - [~] Použít dobře viditelný záblesk nebo LED panel jako obrazovou klapku (automatická klapka po 2 s, hardwarová svítilna hlavní kamery a obrazovkový fallback jsou implementované; zbývá terénní ověření).
+- [~] Identifikovat kamery světelnou sekvencí: společný záblesk hlavní kamery, samostatný záblesk každé top/vedlejší kamery a závěrečný dvojitý podpis hlavní kamery; kroky se ukládají do telemetrie všech kamer i společného `events.jsonl` (zbývá terénní ověření viditelnosti).
 - [ ] Přidat volitelnou zvukovou klapku pro záložní synchronizaci.
 - [~] V postprocessingu detekovat klapku ve videích a uložit korekci časové osy (FFmpeg analyzuje skok průměrného jasu kolem telemetrického markeru, ukládá jistotu a korekci do `analysis.json` a reportu; zbývá ověření na různých scénách a světelných podmínkách).
 - [~] Ověřit omezení ovládání svítilny v cílových mobilních prohlížečích (Chrome/Android je podporován experimentálně; externí světlo a testovací matice chybí).

@@ -9,7 +9,7 @@
   "properties": {
     "schema_version": { "const": "1.0" },
     "event": {
-      "enum": ["recording_requested", "recording_started", "recording_stopped", "clock_sample", "sync_marker"]
+      "enum": ["recording_requested", "recording_started", "recording_stopped", "clock_sample", "clock_sync", "sync_marker"]
     },
     "monotonic_ms": { "type": "number", "minimum": 0 },
     "recording_offset_ms": { "type": ["number", "null"] },

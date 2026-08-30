@@ -218,7 +218,7 @@ function connectSocket(id: string, cameraId?: string) {
     }
     if (message.type === 'clap.trigger' && role.value !== 'director' && recording.value) {
       recordTelemetry('sync_marker', message.payload)
-      if (role.value === 'main_camera') flashClap()
+      if (!message.payload.target_device_id ? role.value === 'main_camera' : message.payload.target_device_id === deviceId.value) flashClap()
     }
     if (message.type === 'control.arm' && role.value !== 'director') {
       const readiness = await checkCameraReadiness()
@@ -403,7 +403,7 @@ function triggerClap() {
     error.value = 'Hlavní kamera není připojená k řídicímu kanálu.'
     return
   }
-  socket.send(JSON.stringify({ type: 'clap.trigger', payload: { requested_at: new Date().toISOString() } }))
+  socket.send(JSON.stringify({ type: 'clap.sequence.request', payload: { requested_at: new Date().toISOString() } }))
 }
 
 function sendControlAck(commandId: string | undefined, status: 'ready' | 'started' | 'stopped' | 'error', detail?: string) {
@@ -844,7 +844,7 @@ onBeforeUnmount(() => {
           <button v-else class="stop" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
         </div>
         <p v-if="activeCommandType && connectedDevices.length" class="muted">Potvrzení povelu: {{ Object.values(controlAcks).filter(ack => !['pending', 'timeout', 'error'].includes(ack.status)).length }}/{{ connectedDevices.length }}</p>
-        <button class="clap-button" :disabled="!devices.some(device => device.role === 'main_camera' && device.connected)" @click="triggerClap">Spustit světelnou klapku</button>
+        <button class="clap-button" :disabled="!devices.some(device => device.role === 'main_camera' && device.connected)" @click="triggerClap">Spustit identifikační klapku</button>
         <p v-if="!devices.length" class="muted">Čekám na připojení prvního telefonu…</p>
         <article v-for="device in devices" :key="device.device_id" class="device">
           <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small><small v-if="clockMetrics[device.device_id]">Hodiny: offset {{ clockMetrics[device.device_id].offset_ms.toFixed(1) }} ms · RTT {{ clockMetrics[device.device_id].rtt_ms.toFixed(1) }} ms</small><small v-if="deviceUploadStatus[device.device_id]">Přenos: {{ formatSpeed(deviceUploadStatus[device.device_id].speed_bps) }} · zbývá {{ formatEta(deviceUploadStatus[device.device_id].eta_seconds) }} · opakování {{ deviceUploadStatus[device.device_id].retries }}</small><small v-if="deviceUploadStatus[device.device_id]?.error" class="ack-error">{{ deviceUploadStatus[device.device_id].error }}</small><small v-if="controlAcks[device.device_id]" :class="{ 'ack-error': ['error', 'timeout'].includes(controlAcks[device.device_id].status) }">{{ ackLabel(controlAcks[device.device_id]) }}</small></div>

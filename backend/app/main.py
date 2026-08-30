@@ -14,6 +14,7 @@ from .models import (
     Device,
     CaptureMedia,
     DeviceRegistration,
+    DeviceRole,
     DeviceState,
     Session,
     SessionCreate,
@@ -28,6 +29,7 @@ from .uploads import UploadConflictError, UploadNotFoundError, uploads
 from .websocket import connections
 
 app = FastAPI(title="MultiCam control server", version="0.1.0")
+active_clap_sequences: set[UUID] = set()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "https://localhost:5173"],
@@ -257,6 +259,9 @@ async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID
                     },
                 })
                 continue
+            if message.type == "clap.sequence.request":
+                asyncio.create_task(run_clap_sequence(session_id, automatic=False))
+                continue
             if message.type == "clock.report" and device_id is not None:
                 message.payload["device_id"] = str(device_id)
             elif message.type == "upload.client_status" and device_id is not None:
@@ -302,16 +307,53 @@ async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID
 
 async def trigger_delayed_clap(session_id: UUID) -> None:
     await asyncio.sleep(2)
+    await run_clap_sequence(session_id, automatic=True)
+
+
+async def run_clap_sequence(session_id: UUID, automatic: bool) -> None:
     try:
         session = await store.get(session_id)
     except SessionNotFoundError:
         return
     if session.state != SessionState.RECORDING:
         return
-    await connections.broadcast(session_id, {
-        "type": "clap.trigger",
-        "payload": {"requested_at": datetime.now(timezone.utc).isoformat(), "automatic": True},
+    if session_id in active_clap_sequences:
+        return
+    active_clap_sequences.add(session_id)
+    sequence_id = str(uuid4())
+    connected = [device for device in session.devices.values() if device.connected]
+    main = next((device for device in connected if device.role == DeviceRole.MAIN_CAMERA), None)
+    secondary = [device for device in connected if device.role != DeviceRole.MAIN_CAMERA]
+    steps: list[tuple[str, Device | None]] = []
+    if main:
+        steps.append(("sync", main))
+    steps.extend(("camera_id", device) for device in secondary)
+    if main:
+        steps.extend([("main_signature", main), ("main_signature", main)])
+    uploads.append_session_event(session_id, {
+        "type": "clap.sequence.started", "sequence_id": sequence_id,
+        "automatic": automatic, "created_at": datetime.now(timezone.utc).isoformat(),
+        "step_count": len(steps),
     })
+    for index, (phase, target) in enumerate(steps):
+        current = await store.get(session_id)
+        if current.state != SessionState.RECORDING:
+            break
+        payload = {
+            "sequence_id": sequence_id, "step_index": index, "step_count": len(steps),
+            "phase": phase, "target_device_id": str(target.device_id) if target else None,
+            "target_device_name": target.name if target else None,
+            "target_role": target.role.value if target else None,
+            "requested_at": datetime.now(timezone.utc).isoformat(), "automatic": automatic,
+        }
+        uploads.append_session_event(session_id, {"type": "clap.step", **payload})
+        await connections.broadcast(session_id, {"type": "clap.trigger", "payload": payload})
+        await asyncio.sleep(1.1)
+    uploads.append_session_event(session_id, {
+        "type": "clap.sequence.completed", "sequence_id": sequence_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    active_clap_sequences.discard(session_id)
 
 
 frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
