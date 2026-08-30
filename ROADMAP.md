@@ -25,11 +25,11 @@
 ## 2. Lokální záznam videa a telemetrie
 
 - [ ] Inicializovat kameru a nabídnout pouze ověřené kombinace rozlišení/FPS/kodeku.
-- [ ] Nahrávat přes `MediaRecorder` po kratších blocích, ne jako jediný obří Blob v RAM.
-- [ ] Průběžně ukládat bloky do IndexedDB a obnovit stav po reloadu nebo pádu PWA.
-- [ ] Zaznamenávat monotónní čas a jen metadata nezbytná pro synchronizaci záznamu.
-- [ ] U časových událostí uložit čas vůči začátku lokálního záznamu; nemíchat bez převodu různé časové zdroje.
-- [ ] Zaznamenat skutečná nastavení streamu, typ MIME, rozměry, FPS a verzi aplikace.
+- [x] Nahrávat přes `MediaRecorder` po kratších blocích, ne jako jediný obří Blob v RAM.
+- [x] Průběžně ukládat bloky do IndexedDB a obnovit stav po reloadu nebo pádu PWA.
+- [x] Zaznamenávat monotónní čas a jen metadata nezbytná pro synchronizaci záznamu.
+- [x] U časových událostí uložit čas vůči začátku lokálního záznamu; nemíchat bez převodu různé časové zdroje.
+- [x] Zaznamenat skutečná nastavení streamu, typ MIME, rozměry, FPS a verzi aplikace.
 - [ ] Ošetřit zamknutí obrazovky, přepnutí aplikace, nedostatek místa a odebrání oprávnění.
 
 **Hotovo, když:** telefon pořídí několikaminutový záznam offline a po restartu aplikace jej stále nabídne k odeslání.
@@ -53,7 +53,7 @@
 - [x] Podporovat opakování bloků, pokračování přenosu a idempotentní požadavky.
 - [x] Po dokončení ověřit počet bloků, velikost a SHA-256 videa i telemetrie.
 - [x] Server vrátí podepsané/identifikovatelné potvrzení o převzetí.
-- [ ] Smazání v telefonu povolit až po potvrzení; výchozí chování má vyžadovat vědomé potvrzení uživatele.
+- [x] Smazání v telefonu povolit až po potvrzení; výchozí chování má vyžadovat vědomé potvrzení uživatele.
 - [ ] Zobrazit průběh, rychlost, zbývající čas a chyby jednotlivých telefonů.
 
 **Hotovo, když:** přerušený přenos pokračuje bez ztráty dat a lokální kopie nezmizí před úspěšnou verifikací.

@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { createSession, getCurrentSession, getSession, registerDevice, sessionSocket, uploadArtifact, type DeviceCapabilities } from './api'
+import {
+  appendRecordingChunk,
+  appendTelemetryEvent,
+  createLocalCapture,
+  deleteLocalCapture,
+  listLocalCaptures,
+  readLocalArtifacts,
+  setLocalCaptureState,
+  type LocalCapture,
+} from './recordingStore'
 import type { Session } from './types'
 
 type Role = 'director' | 'main_camera' | 'top_camera' | 'secondary_camera'
@@ -19,13 +29,20 @@ const cameraReady = ref(false)
 const uploadProgress = ref<number | null>(null)
 const uploadVerified = ref(false)
 const deviceUploadProgress = ref<Record<string, number>>({})
+const localCaptures = ref<LocalCapture[]>([])
+const recordingStarting = ref(false)
+const recordingFinalizing = ref(false)
+const uploadingCaptureId = ref<string | null>(null)
 let socket: WebSocket | null = null
 let flashTimer: number | undefined
 let torchTimer: number | undefined
 let mediaStream: MediaStream | null = null
 let mediaRecorder: MediaRecorder | null = null
-let recordedChunks: Blob[] = []
 let captureId = ''
+let chunkIndex = 0
+let telemetryIndex = 0
+let pendingChunkWrites: Promise<void>[] = []
+let pendingTelemetryWrites: Promise<void>[] = []
 let recordingStartedAt: number | null = null
 let telemetryTimer: number | undefined
 let geolocationWatchId: number | undefined
@@ -68,8 +85,6 @@ interface TelemetryEvent {
   details?: Record<string, unknown>
 }
 
-let telemetryEvents: TelemetryEvent[] = []
-
 const devices = computed(() => Object.values(session.value?.devices ?? {}))
 
 async function readCapabilities(): Promise<DeviceCapabilities> {
@@ -110,11 +125,11 @@ function connectSocket(id: string, cameraId?: string) {
   socket.onmessage = (event) => {
     const message = JSON.parse(event.data)
     if (message.type === 'session.snapshot' || message.type === 'session.updated') session.value = message.payload
-    if (message.type === 'clap.trigger' && role.value !== 'director') {
+    if (message.type === 'clap.trigger' && role.value !== 'director' && recording.value) {
       recordTelemetry('sync_marker', message.payload)
       if (role.value === 'main_camera') flashClap()
     }
-    if (message.type === 'recording.start' && role.value !== 'director') startLocalRecording(message.payload)
+    if (message.type === 'recording.start' && role.value !== 'director') void startLocalRecording(message.payload)
     if (message.type === 'recording.stop' && role.value !== 'director') stopLocalRecording()
     if (message.type === 'upload.progress') {
       const { device_id, received_chunks, total_chunks } = message.payload
@@ -142,6 +157,7 @@ async function joinCamera() {
   error.value = ''
   try {
     await prepareSensors()
+    await navigator.storage?.persist?.().catch(() => false)
     const activeSession = await getCurrentSession()
     const capabilities = await readCapabilities()
     const cameraRole = role.value === 'main_camera'
@@ -154,7 +170,8 @@ async function joinCamera() {
     connectSocket(activeSession.session_id, device.device_id)
     await nextTick()
     await prepareCamera()
-    if (activeSession.state === 'recording') startLocalRecording({ joined_during_recording: true })
+    await refreshLocalCaptures()
+    if (activeSession.state === 'recording') void startLocalRecording({ joined_during_recording: true })
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'K relaci se nelze připojit.'
   } finally {
@@ -194,7 +211,7 @@ async function prepareCamera() {
 function recordTelemetry(event: TelemetryEvent['event'], details?: Record<string, unknown>) {
   const monotonic = performance.now()
   const settings = mediaStream?.getVideoTracks()[0]?.getSettings() as (MediaTrackSettings & { zoom?: number }) | undefined
-  telemetryEvents.push({
+  const sample: TelemetryEvent = {
     schema_version: '1.0',
     event,
     monotonic_ms: monotonic,
@@ -209,7 +226,15 @@ function recordTelemetry(event: TelemetryEvent['event'], details?: Record<string
     position: latestPosition ? { ...latestPosition } : null,
     orientation: latestOrientation ? { ...latestOrientation } : null,
     ...(details ? { details } : {}),
-  })
+  }
+  if (captureId) {
+    const write = appendTelemetryEvent(captureId, telemetryIndex, sample).catch((reason) => {
+      error.value = reason instanceof Error ? `Telemetrii nelze uložit: ${reason.message}` : 'Telemetrii nelze uložit.'
+      throw reason
+    })
+    telemetryIndex += 1
+    pendingTelemetryWrites.push(write)
+  }
 }
 
 async function prepareSensors() {
@@ -253,51 +278,67 @@ function handleOrientation(event: DeviceOrientationEvent) {
   }
 }
 
-function startLocalRecording(requestDetails: Record<string, unknown> = {}) {
-  if (!mediaStream || recording.value) return
+async function startLocalRecording(requestDetails: Record<string, unknown> = {}) {
+  if (!mediaStream || recording.value || recordingStarting.value || recordingFinalizing.value || !session.value || !deviceId.value || role.value === 'director') return
+  recordingStarting.value = true
   try {
+    const cameraRole = role.value as Exclude<Role, 'director'>
     const preferredTypes = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
     const mimeType = preferredTypes.find((type) => MediaRecorder.isTypeSupported(type))
-    recordedChunks = []
     captureId = crypto.randomUUID()
+    const currentCaptureId = captureId
+    chunkIndex = 0
+    telemetryIndex = 0
+    pendingChunkWrites = []
+    pendingTelemetryWrites = []
     recordingStartedAt = null
-    telemetryEvents = []
-    recordTelemetry('recording_requested', requestDetails)
     if (recordingUrl.value) URL.revokeObjectURL(recordingUrl.value)
     recordingUrl.value = ''
     mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined)
+    const settings = mediaStream.getVideoTracks()[0]?.getSettings() as (MediaTrackSettings & { zoom?: number }) | undefined
+    const localCapture: LocalCapture = {
+      capture_id: captureId,
+      session_id: session.value.session_id,
+      device_id: deviceId.value,
+      role: cameraRole,
+      mime_type: mediaRecorder.mimeType || mimeType || 'video/webm',
+      state: 'recording',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      chunk_count: 0,
+      size_bytes: 0,
+      stream_settings: {
+        width: settings?.width ?? null,
+        height: settings?.height ?? null,
+        frame_rate: settings?.frameRate ?? null,
+        zoom_ratio: settings?.zoom ?? null,
+        mime_type: mediaRecorder.mimeType,
+        app_version: '0.1.0',
+      },
+    }
+    await createLocalCapture(localCapture)
+    await refreshLocalCaptures()
+    recordTelemetry('recording_requested', requestDetails)
     mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size) recordedChunks.push(event.data)
+      if (!event.data.size) return
+      const write = appendRecordingChunk(currentCaptureId, chunkIndex, event.data).catch((reason) => {
+        error.value = reason instanceof Error ? `Blok záznamu nelze uložit: ${reason.message}` : 'Blok záznamu nelze uložit.'
+        throw reason
+      })
+      chunkIndex += 1
+      pendingChunkWrites.push(write)
     }
     mediaRecorder.onstop = async () => {
-      const blob = new Blob(recordedChunks, { type: mediaRecorder?.mimeType || 'video/webm' })
-      recordingUrl.value = URL.createObjectURL(blob)
-      if (!session.value || !deviceId.value || blob.size === 0) return
-      const telemetry = new Blob(
-        telemetryEvents.map((event) => `${JSON.stringify(event)}\n`),
-        { type: 'application/x-ndjson' },
-      )
-      uploadProgress.value = 0
-      uploadVerified.value = false
       try {
-        let videoProgress = 0
-        let telemetryProgress = 0
-        const updateProgress = () => {
-          uploadProgress.value = Math.round((videoProgress * blob.size + telemetryProgress * telemetry.size) / (blob.size + telemetry.size))
-        }
-        await Promise.all([
-          uploadArtifact(session.value.session_id, deviceId.value, captureId, 'recording', blob, (progress) => {
-            videoProgress = progress
-            updateProgress()
-          }),
-          uploadArtifact(session.value.session_id, deviceId.value, captureId, 'telemetry', telemetry, (progress) => {
-            telemetryProgress = progress
-            updateProgress()
-          }),
-        ])
-        uploadVerified.value = true
+        await Promise.all([...pendingChunkWrites, ...pendingTelemetryWrites])
+        await setLocalCaptureState(currentCaptureId, 'stored')
+        const stored = (await listLocalCaptures(deviceId.value)).find((capture) => capture.capture_id === currentCaptureId)
+        if (stored) await uploadStoredCapture(stored)
       } catch (reason) {
-        error.value = reason instanceof Error ? `Přenos selhal: ${reason.message}` : 'Přenos záznamu selhal.'
+        error.value = reason instanceof Error ? reason.message : 'Dokončení lokálního záznamu selhalo.'
+        await refreshLocalCaptures()
+      } finally {
+        recordingFinalizing.value = false
       }
     }
     mediaRecorder.start(1000)
@@ -307,17 +348,76 @@ function startLocalRecording(requestDetails: Record<string, unknown> = {}) {
     recording.value = true
   } catch {
     error.value = 'Záznam se na tomto zařízení nepodařilo spustit.'
+  } finally {
+    recordingStarting.value = false
   }
 }
 
 function stopLocalRecording() {
   if (!mediaRecorder || mediaRecorder.state === 'inactive') return
+  recordingFinalizing.value = true
   recordTelemetry('recording_stopped')
   window.clearInterval(telemetryTimer)
   window.removeEventListener('deviceorientation', handleOrientation)
   if (geolocationWatchId !== undefined) navigator.geolocation.clearWatch(geolocationWatchId)
   mediaRecorder.stop()
   recording.value = false
+}
+
+async function refreshLocalCaptures() {
+  if (!deviceId.value) return
+  try {
+    localCaptures.value = await listLocalCaptures(deviceId.value)
+  } catch (reason) {
+    error.value = reason instanceof Error ? `Lokální záznamy nelze načíst: ${reason.message}` : 'Lokální záznamy nelze načíst.'
+  }
+}
+
+async function uploadStoredCapture(capture: LocalCapture) {
+  if (!session.value || !deviceId.value || uploadingCaptureId.value) return
+  uploadingCaptureId.value = capture.capture_id
+  uploadProgress.value = 0
+  uploadVerified.value = false
+  await setLocalCaptureState(capture.capture_id, 'uploading')
+  await refreshLocalCaptures()
+  try {
+    const { recording: localRecording, telemetry } = await readLocalArtifacts(capture.capture_id, capture.mime_type)
+    if (!localRecording.size || !telemetry.size) throw new Error('Lokální záznam nebo telemetrie jsou prázdné.')
+    if (recordingUrl.value) URL.revokeObjectURL(recordingUrl.value)
+    recordingUrl.value = URL.createObjectURL(localRecording)
+    let videoProgress = 0
+    let telemetryProgress = 0
+    const updateProgress = () => {
+      uploadProgress.value = Math.round(
+        (videoProgress * localRecording.size + telemetryProgress * telemetry.size) / (localRecording.size + telemetry.size),
+      )
+    }
+    await Promise.all([
+      uploadArtifact(session.value.session_id, deviceId.value, capture.capture_id, 'recording', localRecording, (progress) => {
+        videoProgress = progress
+        updateProgress()
+      }),
+      uploadArtifact(session.value.session_id, deviceId.value, capture.capture_id, 'telemetry', telemetry, (progress) => {
+        telemetryProgress = progress
+        updateProgress()
+      }),
+    ])
+    await setLocalCaptureState(capture.capture_id, 'verified')
+    uploadVerified.value = true
+  } catch (reason) {
+    await setLocalCaptureState(capture.capture_id, 'stored')
+    error.value = reason instanceof Error ? `Přenos selhal: ${reason.message}` : 'Přenos záznamu selhal.'
+  } finally {
+    uploadingCaptureId.value = null
+    await refreshLocalCaptures()
+  }
+}
+
+async function confirmDeleteCapture(capture: LocalCapture) {
+  if (capture.state !== 'verified') return
+  if (!window.confirm('Server potvrdil převzetí. Opravdu smazat lokální kopii z telefonu?')) return
+  await deleteLocalCapture(capture.capture_id)
+  await refreshLocalCaptures()
 }
 
 async function flashClap() {
@@ -404,7 +504,7 @@ onBeforeUnmount(() => {
         <video ref="preview" class="preview" autoplay muted playsinline></video>
         <div class="ready"><span>✓</span><div><strong>Zařízení je připravené</strong><small>{{ deviceName }}</small></div></div>
         <div v-if="role === 'main_camera'" class="record-controls">
-          <button v-if="session.state !== 'recording'" :disabled="!cameraReady" @click="sendRecordingCommand('recording.start')">● Spustit záznam</button>
+          <button v-if="session.state !== 'recording'" :disabled="!cameraReady || recordingStarting || recordingFinalizing" @click="sendRecordingCommand('recording.start')">● Spustit záznam</button>
           <button v-else class="stop" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
         </div>
         <p v-else-if="recording" class="recording-indicator">● Probíhá záznam</p>
@@ -414,6 +514,17 @@ onBeforeUnmount(() => {
           <progress :value="uploadProgress" max="100"></progress>
         </div>
         <a v-if="recordingUrl" class="download" :href="recordingUrl" :download="`${role}-${Date.now()}.webm`">Stáhnout poslední záznam</a>
+        <section v-if="localCaptures.length" class="local-captures">
+          <h3>Lokální záznamy</h3>
+          <article v-for="capture in localCaptures" :key="capture.capture_id" class="local-capture">
+            <div>
+              <strong>{{ new Date(capture.created_at).toLocaleString() }}</strong>
+              <small>{{ capture.state === 'recording' ? 'přerušený' : capture.state }} · {{ formatBytes(capture.size_bytes) }}</small>
+            </div>
+            <button v-if="capture.state !== 'verified'" class="small" :disabled="uploadingCaptureId !== null" @click="uploadStoredCapture(capture)">{{ uploadingCaptureId === capture.capture_id ? 'Odesílám…' : 'Odeslat' }}</button>
+            <button v-if="capture.state === 'verified'" class="small danger" @click="confirmDeleteCapture(capture)">Smazat z telefonu</button>
+          </article>
+        </section>
       </template>
     </section>
     <p v-if="error" class="error">{{ error }}</p>

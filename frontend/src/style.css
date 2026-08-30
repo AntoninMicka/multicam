@@ -34,4 +34,9 @@ button.stop { color: #fff; background: #dc2626; }
 .upload { display: grid; gap: 8px; margin: 16px 0; }
 .upload div { display: flex; justify-content: space-between; }
 .upload progress { width: 100%; accent-color: #86efac; }
+.local-captures { margin-top: 28px; padding-top: 22px; border-top: 1px solid #283750; }
+.local-capture { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid #283750; }
+.local-capture div { display: grid; gap: 4px; }
+button.small { min-height: 36px; padding: 0 12px; font-size: .78rem; }
+button.danger { color: #fecaca; border: 1px solid #7f1d1d; background: transparent; }
 @media (max-width: 520px) { main { padding-top: 28px; } .session-heading { align-items: flex-start; } }
