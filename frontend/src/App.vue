@@ -28,6 +28,28 @@ let recordedChunks: Blob[] = []
 let captureId = ''
 let recordingStartedAt: number | null = null
 let telemetryTimer: number | undefined
+let geolocationWatchId: number | undefined
+
+interface PositionSample {
+  latitude: number
+  longitude: number
+  accuracy_m: number
+  altitude_m: number | null
+  altitude_accuracy_m: number | null
+  heading_deg: number | null
+  speed_m_s: number | null
+  timestamp_ms: number
+}
+
+interface OrientationSample {
+  alpha_deg: number | null
+  beta_deg: number | null
+  gamma_deg: number | null
+  absolute: boolean
+}
+
+let latestPosition: PositionSample | null = null
+let latestOrientation: OrientationSample | null = null
 
 interface TelemetryEvent {
   schema_version: '1.0'
@@ -35,6 +57,14 @@ interface TelemetryEvent {
   monotonic_ms: number
   recording_offset_ms: number | null
   utc_time: string
+  camera: {
+    zoom_ratio: number | null
+    field_of_view_deg: number | null
+    width: number | null
+    height: number | null
+  }
+  position: PositionSample | null
+  orientation: OrientationSample | null
   details?: Record<string, unknown>
 }
 
@@ -111,6 +141,7 @@ async function joinCamera() {
   busy.value = true
   error.value = ''
   try {
+    await prepareSensors()
     const activeSession = await getCurrentSession()
     const capabilities = await readCapabilities()
     const cameraRole = role.value === 'main_camera'
@@ -162,14 +193,64 @@ async function prepareCamera() {
 
 function recordTelemetry(event: TelemetryEvent['event'], details?: Record<string, unknown>) {
   const monotonic = performance.now()
+  const settings = mediaStream?.getVideoTracks()[0]?.getSettings() as (MediaTrackSettings & { zoom?: number }) | undefined
   telemetryEvents.push({
     schema_version: '1.0',
     event,
     monotonic_ms: monotonic,
     recording_offset_ms: recordingStartedAt === null ? null : monotonic - recordingStartedAt,
     utc_time: new Date().toISOString(),
+    camera: {
+      zoom_ratio: settings?.zoom ?? null,
+      field_of_view_deg: null,
+      width: settings?.width ?? null,
+      height: settings?.height ?? null,
+    },
+    position: latestPosition ? { ...latestPosition } : null,
+    orientation: latestOrientation ? { ...latestOrientation } : null,
     ...(details ? { details } : {}),
   })
+}
+
+async function prepareSensors() {
+  const orientationEvent = window.DeviceOrientationEvent as typeof DeviceOrientationEvent & {
+    requestPermission?: () => Promise<'granted' | 'denied'>
+  }
+  try {
+    const permission = await orientationEvent.requestPermission?.()
+    if (permission === 'denied') throw new Error('Orientace nebyla povolena.')
+    window.addEventListener('deviceorientation', handleOrientation)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'Orientaci zařízení nelze načíst.'
+  }
+  if (navigator.geolocation && geolocationWatchId === undefined) {
+    geolocationWatchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const { coords } = position
+        latestPosition = {
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          accuracy_m: coords.accuracy,
+          altitude_m: coords.altitude,
+          altitude_accuracy_m: coords.altitudeAccuracy,
+          heading_deg: coords.heading,
+          speed_m_s: coords.speed,
+          timestamp_ms: position.timestamp,
+        }
+      },
+      () => { /* Chybějící GNSS vzorek je v telemetrii reprezentovaný hodnotou null. */ },
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 },
+    )
+  }
+}
+
+function handleOrientation(event: DeviceOrientationEvent) {
+  latestOrientation = {
+    alpha_deg: event.alpha,
+    beta_deg: event.beta,
+    gamma_deg: event.gamma,
+    absolute: event.absolute,
+  }
 }
 
 function startLocalRecording(requestDetails: Record<string, unknown> = {}) {
@@ -233,6 +314,8 @@ function stopLocalRecording() {
   if (!mediaRecorder || mediaRecorder.state === 'inactive') return
   recordTelemetry('recording_stopped')
   window.clearInterval(telemetryTimer)
+  window.removeEventListener('deviceorientation', handleOrientation)
+  if (geolocationWatchId !== undefined) navigator.geolocation.clearWatch(geolocationWatchId)
   mediaRecorder.stop()
   recording.value = false
 }

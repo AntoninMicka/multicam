@@ -80,7 +80,7 @@ V sandboxovém režimu existuje vždy jedna aktuální relace, kterou klienti vy
 
 Spuštění a zastavení záznamu lze ovládat z režisérského pultu i z hlavní kamery. Povel se přenese na všechny připojené kamery. Po zastavení klient vypočítá SHA-256 a automaticky odešle záznam ve 4MB blocích. Server podporuje opakované bloky a navázání podle již přijatých částí, výsledný soubor skládá atomicky a označí zařízení jako `verified` až po kontrole velikosti a SHA-256. Data se ukládají do `data/sessions/`; umístění lze změnit proměnnou `MULTICAM_DATA_DIR`.
 
-Ke každému videu klient vytváří párovaný telemetrický soubor JSON Lines s monotónními a UTC časy startu, stopu, pravidelných vzorků hodin a přijetí synchronizační klapky. Zařízení přejde do stavu `verified` až po ověření videa i telemetrie.
+Ke každému videu klient vytváří párovaný telemetrický soubor JSON Lines s monotónními a UTC časy startu, stopu, pravidelných vzorků hodin a přijetí synchronizační klapky. Každý vzorek obsahuje také poslední GNSS pozici, orientaci zařízení a skutečné nastavení zoomu kamerového tracku. Webová API neposkytují spolehlivě fyzický úhel záběru, proto je `field_of_view_deg` bez kalibrace telefonu explicitně `null`; `zoom_ratio`, rozlišení a ostatní dostupné hodnoty se ukládají přímo. Zařízení přejde do stavu `verified` až po ověření videa i telemetrie.
 
 Dvě sekundy po povelu ke spuštění záznamu server automaticky vyšle světelnou klapku. Hlavní kamera zkusí přes `MediaStreamTrack.applyConstraints()` zapnout hardwarovou svítilnu (`torch`), což je určeno především pro Chrome na Androidu. Pokud prohlížeč nebo telefon tuto možnost neposkytne, použije se celoobrazovkový bílý záblesk.
 
