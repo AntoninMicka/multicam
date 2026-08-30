@@ -7,6 +7,9 @@ FRONTEND_DIR="${PROJECT_DIR}/frontend"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 MULTICAM_HOST="${MULTICAM_HOST:-0.0.0.0}"
 MULTICAM_PORT="${MULTICAM_PORT:-8000}"
+MULTICAM_HTTPS="${MULTICAM_HTTPS:-1}"
+MULTICAM_CERT="${MULTICAM_CERT:-${PROJECT_DIR}/certs/server.cert.pem}"
+MULTICAM_KEY="${MULTICAM_KEY:-${PROJECT_DIR}/certs/server.key.pem}"
 
 log() {
   printf '[multicam] %s\n' "$*"
@@ -46,10 +49,25 @@ fi
 log "Sestavuji PWA…"
 npm --prefix "${FRONTEND_DIR}" run build
 
-log "Spouštím server na http://${MULTICAM_HOST}:${MULTICAM_PORT}"
+declare -a ssl_args=()
+scheme='http'
+if [[ "${MULTICAM_HTTPS}" != "0" ]]; then
+  if [[ "${MULTICAM_CERT}" == "${PROJECT_DIR}/certs/server.cert.pem" \
+    && "${MULTICAM_KEY}" == "${PROJECT_DIR}/certs/server.key.pem" ]]; then
+    "${PROJECT_DIR}/scripts/generate-local-cert.sh"
+  fi
+  if [[ ! -r "${MULTICAM_CERT}" || ! -r "${MULTICAM_KEY}" ]]; then
+    printf 'Chyba: certifikát nebo privátní klíč není čitelný.\n' >&2
+    exit 1
+  fi
+  ssl_args=(--ssl-certfile "${MULTICAM_CERT}" --ssl-keyfile "${MULTICAM_KEY}")
+  scheme='https'
+fi
+
+log "Spouštím server na ${scheme}://${MULTICAM_HOST}:${MULTICAM_PORT}"
 cd "${PROJECT_DIR}"
 exec "${VENV_DIR}/bin/python" -m uvicorn backend.app.main:app \
   --host "${MULTICAM_HOST}" \
   --port "${MULTICAM_PORT}" \
+  "${ssl_args[@]}" \
   "$@"
-

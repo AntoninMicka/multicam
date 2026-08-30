@@ -36,13 +36,25 @@ Nejjednodušší spuštění celé aplikace:
 ./run.sh
 ```
 
-Skript podle potřeby vytvoří `.venv`, nainstaluje Python a npm závislosti, sestaví PWA a spustí FastAPI server. Výchozí adresa je `http://0.0.0.0:8000`; nastavení lze změnit například takto:
+Skript podle potřeby vytvoří `.venv`, nainstaluje Python a npm závislosti, sestaví PWA, vygeneruje lokální certifikát a spustí FastAPI server. Výchozí adresa je `https://0.0.0.0:8000`; nastavení lze změnit například takto:
 
 ```bash
 MULTICAM_HOST=127.0.0.1 MULTICAM_PORT=9000 ./run.sh
 ```
 
 Další argumenty se předají přímo Uvicornu, například `./run.sh --reload`.
+
+### Lokální HTTPS certifikát
+
+Při prvním spuštění vznikne lokální certifikační autorita a serverový certifikát v ignorovaném adresáři `certs/`. Soubor `certs/local-ca.cert.pem` je potřeba nainstalovat jako důvěryhodnou CA do každého telefonu. Privátní soubor `certs/local-ca.key.pem` se nesmí kopírovat ani zveřejňovat.
+
+Serverový certifikát automaticky zahrnuje `localhost`, `127.0.0.1` a LAN adresy zjištěné při jeho vytvoření. Pokud je automatické zjištění nedostupné nebo se IP notebooku změnila, certifikát obnovte explicitně:
+
+```bash
+MULTICAM_CERT_IPS=192.168.1.10 ./scripts/generate-local-cert.sh --force
+```
+
+Více adres lze oddělit čárkou. Pro jednorázové vývojové spuštění bez TLS lze použít `MULTICAM_HTTPS=0 ./run.sh`.
 
 ### Ruční spuštění
 
