@@ -178,6 +178,15 @@ async def list_session_media(session_id: UUID) -> list[CaptureMedia]:
     return uploads.list_media(session)
 
 
+@app.get("/api/sessions/{session_id}/report")
+async def get_session_report(session_id: UUID) -> dict:
+    try:
+        session = await store.get(session_id)
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Session not found") from error
+    return uploads.build_report(session)
+
+
 @app.get("/api/media/{session_id}/{device_id}/{capture_id}/video", response_class=FileResponse)
 async def get_recording_media(session_id: UUID, device_id: UUID, capture_id: UUID) -> FileResponse:
     try:
@@ -208,7 +217,20 @@ async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID
     try:
         while True:
             message = SocketMessage.model_validate(await websocket.receive_json())
-            if message.type == "control.arm":
+            if message.type == "clock.ping":
+                server_received_ms = datetime.now(timezone.utc).timestamp() * 1000
+                await websocket.send_json({
+                    "type": "clock.pong",
+                    "payload": {
+                        **message.payload,
+                        "server_received_ms": server_received_ms,
+                        "server_sent_ms": datetime.now(timezone.utc).timestamp() * 1000,
+                    },
+                })
+                continue
+            if message.type == "clock.report" and device_id is not None:
+                message.payload["device_id"] = str(device_id)
+            elif message.type == "control.arm":
                 session = await store.set_state(session_id, SessionState.ARMED)
                 await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
             elif message.type == "recording.start":

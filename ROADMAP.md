@@ -33,21 +33,21 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 - [x] Zaznamenávat monotónní čas a jen metadata nezbytná pro synchronizaci záznamu.
 - [x] U časových událostí uložit čas vůči začátku lokálního záznamu; nemíchat bez převodu různé časové zdroje.
 - [x] Zaznamenat skutečná nastavení streamu, typ MIME, rozměry, FPS a verzi aplikace.
-- [~] Ošetřit zamknutí obrazovky, přepnutí aplikace, nedostatek místa a odebrání oprávnění (obnova záznamů z IndexedDB je hotová, provozní hraniční stavy ne).
+- [~] Ošetřit zamknutí obrazovky, přepnutí aplikace, nedostatek místa a odebrání oprávnění (Wake Lock, varování při skrytí, kontrola 500 MB před ARM a ztráta mediální stopy jsou hotové; zbývá test plného disku a změn oprávnění na cílových telefonech).
 
 **Hotovo, když:** telefon pořídí několikaminutový záznam offline a po restartu aplikace jej stále nabídne k odeslání.
 
 ## 3. Řízení a synchronizace
 
 - [x] Implementovat přes WebSocket povely `ARM`, `START`, `STOP` s potvrzením od každého klienta, chybovým stavem a timeoutem; server odmítne `START`, dokud všechny připojené kamery nepotvrdí ARM.
-- [ ] Změřit offset a round-trip time hodin mezi telefony a serverem opakovaným handshake.
+- [x] Měřit offset a round-trip time hodin mezi telefony a serverem opakovaným handshake; hodnoty zobrazovat na pultu a ukládat do telemetrie záznamu.
 - [~] Ukládat plánovaný i skutečný lokální čas startu/stopu (ukládá se čas přijetí povelu, lokální monotónní i UTC čas; chybí plánovaný start a síťová korekce).
 - [~] Použít dobře viditelný záblesk nebo LED panel jako obrazovou klapku (automatická klapka po 2 s, hardwarová svítilna hlavní kamery a obrazovkový fallback jsou implementované; zbývá terénní ověření).
 - [ ] Přidat volitelnou zvukovou klapku pro záložní synchronizaci.
 - [ ] V postprocessingu detekovat klapku ve videích a uložit korekci časové osy.
 - [~] Ověřit omezení ovládání svítilny v cílových mobilních prohlížečích (Chrome/Android je podporován experimentálně; externí světlo a testovací matice chybí).
 - [x] Označit všechny kamerové záznamy ze stejného startu/klapky společným `take_id` a seskupit je na režisérském pultu.
-- [~] Přehrávat skupinu kamer jedním tlačítkem se souběžnou telemetrií (Firefox funguje, Chromium jen částečně; ostatní zvukové stopy jsou ztlumené).
+- [~] Přehrávat skupinu kamer jedním tlačítkem se souběžnou telemetrií (master čas je zarovnaný podle `sync_marker`, drift se koriguje a každý dekodér ukazuje stav; zbývá ověření Chromia na cílovém stroji).
 
 **Hotovo, když:** pět krátkých záznamů lze po klapce zarovnat na konkrétní snímek a je znám rozptyl synchronizace.
 
@@ -89,7 +89,7 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 - [~] Uložit všechna videa pod jeden adresář relace a zařízení (struktura existuje, názvy souborů zatím nejsou lidsky čitelné).
 - [~] Uložit manifest se startovními časy, korekcemi podle klapky, délkami, velikostmi a checksumy (perzistentní manifest relace a metadata uploadů existují, souhrnný výstupní manifest ne).
 - [x] Zachovat původní soubory beze změn; synchronizované kopie se zatím nevytvářejí.
-- [ ] Vytvořit jednoduchý report úplnosti a výsledného časového posunu každého videa.
+- [~] Vytvořit jednoduchý report úplnosti a výsledného časového posunu každého videa (JSON report po klapkách obsahuje očekávané/chybějící kamery, soubory, velikosti a SHA-256; chybí výsledná korekce z detekce obrazu).
 
 **Hotovo, když:** centrální uzel obsahuje úplnou, ověřenou a synchronizovanou sadu videí připravenou pro použití jiným projektem.
 
@@ -114,14 +114,9 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 
 ## Doporučené další práce
 
-1. **Diagnostika a synchronizace skupinového přehrávače v Chromiu.** Zobrazit stav
-   načtení/dekódování každého streamu a zavést jeden master čas, podle kterého se
-   ostatní videa průběžně dorovnají.
-2. **Ochrana záznamu na telefonu.** Wake Lock, reakce na `visibilitychange`, kontrola
-   volného místa před startem a jasná chyba při ztrátě kamery, mikrofonu či úložiště.
-3. **Měřený síťový handshake.** Průběžně ukládat offset a RTT každé kamery; tím vznikne
-   lepší hrubé zarovnání i diagnostika před obrazovou detekcí klapky.
-4. **Integrační zkouška na reálných telefonech.** Nejdřív dvě kamery, pak cílový počet;
+1. **Ověření nové ochrany a přehrávače na reálných zařízeních.** Prověřit Wake Lock,
+   plné úložiště, skrytí PWA a skupinové přehrávání zejména v desktopovém Chromiu.
+2. **Integrační zkouška na reálných telefonech.** Nejdřív dvě kamery, pak cílový počet;
    otestovat restart, výpadek Wi-Fi, paralelní upload, teplotu a několikaminutový záznam.
-5. **Výstupní manifest a report úplnosti.** Pro každou klapku shrnout očekávané a
-   přijaté kamery, délky, velikosti, checksumy a později korekce časových os.
+3. **Detekce obrazové nebo zvukové klapky.** Změřit přesnou korekci každého videa,
+   uložit ji do reportu a porovnat ji se síťovým odhadem offsetu.

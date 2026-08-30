@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 import type { CaptureMedia } from './api'
 import CapturePlayer from './CapturePlayer.vue'
 
@@ -7,6 +7,7 @@ const props = defineProps<{ captures: CaptureMedia[] }>()
 const players = ref<Array<InstanceType<typeof CapturePlayer>>>([])
 const playing = ref(false)
 const playbackError = ref('')
+let syncFrame = 0
 
 function setPlayer(player: unknown, index: number): void {
   if (player) players.value[index] = player as InstanceType<typeof CapturePlayer>
@@ -15,6 +16,7 @@ function setPlayer(player: unknown, index: number): void {
 async function togglePlayback(): Promise<void> {
   playbackError.value = ''
   if (playing.value) {
+    cancelAnimationFrame(syncFrame)
     players.value.forEach((player) => player.pause())
     playing.value = false
     return
@@ -27,7 +29,18 @@ async function togglePlayback(): Promise<void> {
     const detail = firstReason instanceof DOMException ? firstReason.message : ''
     playbackError.value = `${failed.length} z ${results.length} videí se nepodařilo spustit${detail ? `: ${detail}` : '.'}`
   }
+  if (playing.value) synchronizePlayers()
 }
+
+function synchronizePlayers(): void {
+  if (!playing.value || !players.value.length) return
+  const masterIndex = Math.max(0, props.captures.findIndex((capture) => capture.role === 'main_camera'))
+  const masterTime = players.value[masterIndex]?.logicalTime() ?? players.value[0]?.logicalTime() ?? 0
+  players.value.forEach((player, index) => { if (index !== masterIndex) player.synchronizeTo(masterTime) })
+  syncFrame = requestAnimationFrame(synchronizePlayers)
+}
+
+onBeforeUnmount(() => cancelAnimationFrame(syncFrame))
 
 function formattedTime(): string {
   const createdAt = props.captures.find((capture) => capture.created_at)?.created_at

@@ -172,6 +172,10 @@ def test_chunked_upload_is_idempotent_and_verified(tmp_path) -> None:
     assert len(media) == 1
     assert media[0]["capture_id"] == receipt["capture_id"]
     assert media[0]["take_id"] is not None
+    report = asyncio.run(request("GET", f"/api/sessions/{session['session_id']}/report")).json()
+    assert report["takes"][0]["complete"] is True
+    assert report["takes"][0]["streams"][0]["artifacts"]["recording"]["sha256"] == digest
+    assert (uploads.root / session["session_id"] / "report.json").is_file()
     assert uploads.artifact_path(
         UUID(session["session_id"]), UUID(device["device_id"]), UUID(receipt["capture_id"]), "recording"
     ).read_bytes() == content

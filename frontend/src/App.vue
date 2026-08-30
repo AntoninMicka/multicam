@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   createSession,
   getCurrentSession,
+  getSessionReport,
   getSession,
   listSessionMedia,
   listSessions,
@@ -53,8 +54,12 @@ interface ControlAck { status: AckStatus; detail?: string }
 const controlAcks = ref<Record<string, ControlAck>>({})
 const activeCommandId = ref('')
 const activeCommandType = ref('')
+const operationalWarnings = ref<string[]>([])
+const clockMetrics = ref<Record<string, { offset_ms: number; rtt_ms: number }>>({})
 let socket: WebSocket | null = null
 let commandTimeout: number | undefined
+let clockTimer: number | undefined
+let wakeLock: { release: () => Promise<void>; released?: boolean } | null = null
 let flashTimer: number | undefined
 let torchTimer: number | undefined
 let mediaStream: MediaStream | null = null
@@ -91,7 +96,7 @@ let latestOrientation: OrientationSample | null = null
 
 interface TelemetryEvent {
   schema_version: '1.0'
-  event: 'recording_requested' | 'recording_started' | 'recording_stopped' | 'clock_sample' | 'sync_marker'
+  event: 'recording_requested' | 'recording_started' | 'recording_stopped' | 'clock_sample' | 'clock_sync' | 'sync_marker'
   monotonic_ms: number
   recording_offset_ms: number | null
   utc_time: string
@@ -173,6 +178,12 @@ function ackLabel(ack: ControlAck | undefined): string {
 function connectSocket(id: string, cameraId?: string) {
   socket?.close()
   socket = sessionSocket(id, cameraId)
+  socket.onopen = () => {
+    if (!cameraId) return
+    sendClockPing()
+    window.clearInterval(clockTimer)
+    clockTimer = window.setInterval(sendClockPing, 5000)
+  }
   socket.onmessage = async (event) => {
     const message = JSON.parse(event.data)
     if (message.type === 'session.snapshot' || message.type === 'session.updated') {
@@ -184,8 +195,8 @@ function connectSocket(id: string, cameraId?: string) {
       if (role.value === 'main_camera') flashClap()
     }
     if (message.type === 'control.arm' && role.value !== 'director') {
-      const ready = cameraReady.value && !!mediaStream && mediaStream.getVideoTracks().some((track) => track.readyState === 'live')
-      sendControlAck(message.payload.command_id, ready ? 'ready' : 'error', ready ? undefined : 'Kamera nebo mikrofon nejsou připravené.')
+      const readiness = await checkCameraReadiness()
+      sendControlAck(message.payload.command_id, readiness.ready ? 'ready' : 'error', readiness.detail)
     }
     if (message.type === 'recording.start' && role.value !== 'director') {
       const started = await startLocalRecording(message.payload)
@@ -204,12 +215,44 @@ function connectSocket(id: string, cameraId?: string) {
     if (message.type === 'control.rejected') {
       error.value = message.payload.detail ?? 'Server řídicí povel odmítl.'
     }
+    if (message.type === 'clock.pong' && role.value !== 'director') handleClockPong(message.payload)
+    if (message.type === 'clock.report' && role.value === 'director') {
+      clockMetrics.value[message.payload.device_id] = { offset_ms: message.payload.offset_ms, rtt_ms: message.payload.rtt_ms }
+    }
     if (message.type === 'upload.progress') {
       const { device_id, received_chunks, total_chunks } = message.payload
       deviceUploadProgress.value[device_id] = Math.round(received_chunks / total_chunks * 100)
     }
   }
   socket.onerror = () => (error.value = 'Spojení se serverem bylo přerušeno.')
+}
+
+async function checkCameraReadiness(): Promise<{ ready: boolean; detail?: string }> {
+  if (!cameraReady.value || !mediaStream?.getVideoTracks().some((track) => track.readyState === 'live')) return { ready: false, detail: 'Kamera není aktivní.' }
+  if (!mediaStream.getAudioTracks().some((track) => track.readyState === 'live')) return { ready: false, detail: 'Mikrofon není aktivní.' }
+  const estimate = await navigator.storage?.estimate?.().catch(() => undefined)
+  const free = estimate?.quota !== undefined && estimate.usage !== undefined ? estimate.quota - estimate.usage : null
+  if (free !== null && free < 500 * 1024 * 1024) return { ready: false, detail: 'Volné místo je menší než 500 MB.' }
+  return { ready: true }
+}
+
+function sendClockPing(): void {
+  if (!socket || socket.readyState !== WebSocket.OPEN || role.value === 'director') return
+  socket.send(JSON.stringify({ type: 'clock.ping', payload: { ping_id: crypto.randomUUID(), client_sent_ms: Date.now() } }))
+}
+
+function handleClockPong(payload: Record<string, number | string>): void {
+  const clientReceived = Date.now()
+  const clientSent = Number(payload.client_sent_ms)
+  const serverReceived = Number(payload.server_received_ms)
+  const serverSent = Number(payload.server_sent_ms)
+  const metrics = {
+    rtt_ms: Math.max(0, (clientReceived - clientSent) - (serverSent - serverReceived)),
+    offset_ms: ((serverReceived - clientSent) + (serverSent - clientReceived)) / 2,
+  }
+  if (deviceId.value) clockMetrics.value[deviceId.value] = metrics
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'clock.report', payload: { ...metrics, measured_at: new Date().toISOString() } }))
+  if (recording.value) recordTelemetry('clock_sync', metrics)
 }
 
 async function chooseRole(selectedRole: Role) {
@@ -246,6 +289,21 @@ async function loadSessionMedia() {
     sessionMedia.value = await listSessionMedia(session.value.session_id)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Záznamy relace nelze načíst.'
+  }
+}
+
+async function downloadSessionReport(): Promise<void> {
+  if (!session.value) return
+  try {
+    const report = await getSessionReport(session.value.session_id)
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${session.value.name.replace(/[^a-zA-Z0-9_-]+/g, '-') || 'session'}-report.json`
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'Report relace nelze vytvořit.'
   }
 }
 
@@ -330,9 +388,42 @@ async function prepareCamera() {
       audio: true,
     })
     if (preview.value) preview.value.srcObject = mediaStream
+    mediaStream.getTracks().forEach((track) => track.addEventListener('ended', () => {
+      const warning = `${track.kind === 'video' ? 'Kamera' : 'Mikrofon'} byl odpojen.`
+      operationalWarnings.value = [...new Set([...operationalWarnings.value, warning])]
+      cameraReady.value = false
+      if (recording.value) error.value = 'Během záznamu došlo ke ztrátě kamery nebo mikrofonu.'
+    }))
     cameraReady.value = true
   } catch {
     error.value = 'Kamera nebo mikrofon nejsou dostupné. Zkontrolujte oprávnění a HTTPS.'
+  }
+}
+
+async function acquireWakeLock(): Promise<void> {
+  const wakeLockApi = (navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void>; released?: boolean }> } }).wakeLock
+  if (!wakeLockApi || document.visibilityState !== 'visible') {
+    operationalWarnings.value = [...new Set([...operationalWarnings.value, 'Wake Lock není dostupný; obrazovku během záznamu nezamykejte.'])]
+    return
+  }
+  try {
+    wakeLock = await wakeLockApi.request('screen')
+  } catch {
+    operationalWarnings.value = [...new Set([...operationalWarnings.value, 'Nepodařilo se zabránit uspání obrazovky.'])]
+  }
+}
+
+async function releaseWakeLock(): Promise<void> {
+  if (wakeLock && !wakeLock.released) await wakeLock.release().catch(() => undefined)
+  wakeLock = null
+}
+
+function handleVisibilityChange(): void {
+  if (!recording.value) return
+  if (document.visibilityState === 'hidden') {
+    operationalWarnings.value = [...new Set([...operationalWarnings.value, 'Aplikace byla během záznamu skryta; zkontrolujte výsledný soubor.'])]
+  } else {
+    void acquireWakeLock()
   }
 }
 
@@ -473,8 +564,9 @@ async function startLocalRecording(requestDetails: Record<string, unknown> = {})
     mediaRecorder.start(1000)
     recordingStartedAt = performance.now()
     recordTelemetry('recording_started')
-    telemetryTimer = window.setInterval(() => recordTelemetry('clock_sample'), 1000)
+    telemetryTimer = window.setInterval(() => recordTelemetry('clock_sample', deviceId.value ? clockMetrics.value[deviceId.value] : undefined), 1000)
     recording.value = true
+    await acquireWakeLock()
     return true
   } catch {
     error.value = 'Záznam se na tomto zařízení nepodařilo spustit.'
@@ -493,6 +585,7 @@ function stopLocalRecording(): boolean {
   if (geolocationWatchId !== undefined) navigator.geolocation.clearWatch(geolocationWatchId)
   mediaRecorder.stop()
   recording.value = false
+  void releaseWakeLock()
   return true
 }
 
@@ -575,6 +668,8 @@ function roleLabel(value: Role): string {
   return value === 'top_camera' ? 'top-over kamera' : 'vedlejší kamera'
 }
 
+onMounted(() => document.addEventListener('visibilitychange', handleVisibilityChange))
+
 onBeforeUnmount(() => {
   socket?.close()
   stopLocalRecording()
@@ -585,7 +680,10 @@ onBeforeUnmount(() => {
   const videoTrack = mediaStream?.getVideoTracks()[0]
   if (videoTrack) void videoTrack.applyConstraints({ advanced: [{ torch: false } as MediaTrackConstraintSet] }).catch(() => undefined)
   window.clearInterval(telemetryTimer)
+  window.clearInterval(clockTimer)
   window.clearTimeout(commandTimeout)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  void releaseWakeLock()
 })
 </script>
 
@@ -645,16 +743,17 @@ onBeforeUnmount(() => {
         <button class="clap-button" :disabled="!devices.some(device => device.role === 'main_camera' && device.connected)" @click="triggerClap">Spustit světelnou klapku</button>
         <p v-if="!devices.length" class="muted">Čekám na připojení prvního telefonu…</p>
         <article v-for="device in devices" :key="device.device_id" class="device">
-          <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small><small v-if="controlAcks[device.device_id]" :class="{ 'ack-error': ['error', 'timeout'].includes(controlAcks[device.device_id].status) }">{{ ackLabel(controlAcks[device.device_id]) }}</small></div>
+          <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small><small v-if="clockMetrics[device.device_id]">Hodiny: offset {{ clockMetrics[device.device_id].offset_ms.toFixed(1) }} ms · RTT {{ clockMetrics[device.device_id].rtt_ms.toFixed(1) }} ms</small><small v-if="controlAcks[device.device_id]" :class="{ 'ack-error': ['error', 'timeout'].includes(controlAcks[device.device_id].status) }">{{ ackLabel(controlAcks[device.device_id]) }}</small></div>
           <span :class="['dot', { offline: !device.connected }]">{{ device.connected ? (device.state === 'uploading' ? `přenos ${deviceUploadProgress[device.device_id] ?? 0} %` : device.state) : 'odpojeno' }}</span>
         </article>
-        <div class="media-heading"><h3>Záznamy ({{ sessionMedia.length }})</h3><button class="small" @click="loadSessionMedia">Obnovit</button></div>
+        <div class="media-heading"><h3>Záznamy ({{ sessionMedia.length }})</h3><div class="heading-actions"><button class="small secondary" @click="downloadSessionReport">Stáhnout report</button><button class="small" @click="loadSessionMedia">Obnovit</button></div></div>
         <p v-if="!sessionMedia.length" class="muted">Relace zatím nemá ověřené záznamy.</p>
         <div v-else class="take-list">
           <CaptureGroup v-for="group in captureGroups" :key="group.takeId" :captures="group.captures" />
         </div>
       </template>
       <template v-else>
+        <div v-if="operationalWarnings.length" class="warning-list"><strong>Upozornění</strong><small v-for="warning in operationalWarnings" :key="warning">{{ warning }}</small></div>
         <video ref="preview" class="preview" autoplay muted playsinline></video>
         <div class="ready"><span>✓</span><div><strong>Zařízení je připravené</strong><small>{{ deviceName }}</small></div></div>
         <div v-if="role === 'main_camera'" class="record-controls">

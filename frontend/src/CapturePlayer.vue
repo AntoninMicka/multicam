@@ -7,6 +7,8 @@ const samples = ref<TelemetrySample[]>([])
 const video = ref<HTMLVideoElement | null>(null)
 const currentTimeMs = ref(0)
 const loadingError = ref('')
+const mediaStatus = ref<'loading' | 'ready' | 'playing' | 'paused' | 'ended' | 'error'>('loading')
+const mediaError = ref('')
 
 onMounted(async () => {
   if (!props.capture.telemetry_url) {
@@ -34,6 +36,10 @@ const current = computed<TelemetrySample | null>(() => {
   }
   return nearest
 })
+const syncOffsetSeconds = computed(() => {
+  const marker = samples.value.find((sample) => sample.event === 'sync_marker' && sample.recording_offset_ms !== null)
+  return (marker?.recording_offset_ms ?? 0) / 1000
+})
 
 function number(value: number | null | undefined, digits = 2): string {
   return value === null || value === undefined ? '—' : value.toFixed(digits)
@@ -41,7 +47,7 @@ function number(value: number | null | undefined, digits = 2): string {
 
 async function playFromStart(): Promise<void> {
   if (!video.value) return
-  video.value.currentTime = 0
+  video.value.currentTime = syncOffsetSeconds.value
   await video.value.play()
 }
 
@@ -49,7 +55,22 @@ function pause(): void {
   video.value?.pause()
 }
 
-defineExpose({ playFromStart, pause })
+function logicalTime(): number { return (video.value?.currentTime ?? 0) - syncOffsetSeconds.value }
+function synchronizeTo(logicalMasterTime: number): void {
+  if (!video.value || !Number.isFinite(logicalMasterTime)) return
+  const target = logicalMasterTime + syncOffsetSeconds.value
+  const drift = video.value.currentTime - target
+  if (Math.abs(drift) > 0.12) video.value.currentTime = target
+  video.value.playbackRate = Math.abs(drift) > 0.04 ? (drift > 0 ? 0.97 : 1.03) : 1
+}
+
+function describeMediaError(): void {
+  const code = video.value?.error?.code
+  mediaStatus.value = 'error'
+  mediaError.value = ({ 1: 'načítání přerušeno', 2: 'síťová chyba', 3: 'chyba dekódování', 4: 'nepodporovaný formát' } as Record<number, string>)[code ?? 0] ?? 'video nelze přehrát'
+}
+
+defineExpose({ playFromStart, pause, logicalTime, synchronizeTo })
 </script>
 
 <template>
@@ -58,7 +79,11 @@ defineExpose({ playFromStart, pause })
       <div><strong>{{ capture.device_name }}</strong><small>{{ capture.role }}</small></div>
       <small>{{ (capture.size_bytes / 1024 / 1024).toFixed(1) }} MB</small>
     </header>
-    <video ref="video" :src="capture.video_url" :muted="muted" controls playsinline preload="auto" @timeupdate="currentTimeMs = ($event.target as HTMLVideoElement).currentTime * 1000"></video>
+    <video ref="video" :src="capture.video_url" :muted="muted" controls playsinline preload="auto"
+      @loadedmetadata="mediaStatus = 'ready'" @playing="mediaStatus = 'playing'" @pause="mediaStatus = 'paused'"
+      @ended="mediaStatus = 'ended'" @error="describeMediaError"
+      @timeupdate="currentTimeMs = ($event.target as HTMLVideoElement).currentTime * 1000"></video>
+    <p :class="['media-state', mediaStatus]">{{ mediaStatus }}<span v-if="mediaError"> · {{ mediaError }}</span></p>
     <p v-if="loadingError" class="telemetry-error">{{ loadingError }}</p>
     <dl v-else class="telemetry-values">
       <div><dt>čas</dt><dd>{{ (currentTimeMs / 1000).toFixed(2) }} s</dd></div>
@@ -84,5 +109,7 @@ video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; }
 dt { color: #8391a7; font-size: .65rem; text-transform: uppercase; }
 dd { margin: 3px 0 0; overflow: hidden; font-size: .78rem; font-variant-numeric: tabular-nums; text-overflow: ellipsis; }
 .telemetry-error { padding: 12px; color: #fca5a5; }
+.media-state { margin: 0; padding: 6px 10px; color: #8391a7; font-size: .7rem; }
+.media-state.error { color: #fca5a5; }
 @media (max-width: 520px) { .telemetry-values { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

@@ -41,10 +41,12 @@ button.stop { color: #fff; background: #dc2626; }
 button.small { min-height: 36px; padding: 0 12px; font-size: .78rem; }
 button.danger { color: #fecaca; border: 1px solid #7f1d1d; background: transparent; }
 .recovery-notice { display: grid; gap: 5px; margin: 16px 0; padding: 14px; border: 1px solid #365a4a; border-radius: 10px; background: #14532d33; }
+.warning-list { display: grid; gap: 5px; margin: 12px 0; padding: 14px; color: #fde68a; border: 1px solid #854d0e; border-radius: 10px; background: #713f1233; }
 .session-list { display: grid; gap: 9px; margin-bottom: 30px; padding-bottom: 26px; border-bottom: 1px solid #283750; }
 button.session-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; color: #e8edf5; text-align: left; border: 1px solid #405170; background: #0b1322; }
 .session-item small { font-weight: 500; }
 .media-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 30px; }
 .media-heading h3 { margin: 0; }
+.heading-actions { display: flex; gap: 8px; }
 .take-list { display: grid; gap: 22px; margin-top: 14px; }
 @media (max-width: 520px) { main { padding-top: 28px; } .session-heading { align-items: flex-start; } }

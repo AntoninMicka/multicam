@@ -244,5 +244,60 @@ class UploadService:
                     return path
         raise UploadNotFoundError(capture_id)
 
+    def build_report(self, session: Session) -> dict:
+        expected_devices = {
+            str(device.device_id): {"name": device.name, "role": device.role.value}
+            for device in session.devices.values()
+        }
+        takes: dict[str, dict] = {}
+        for media in self.list_media(session):
+            take_id = str(media.take_id or media.capture_id)
+            take = takes.setdefault(take_id, {
+                "take_id": take_id,
+                "created_at": media.created_at.isoformat() if media.created_at else None,
+                "streams": [],
+            })
+            artifacts: dict[str, dict] = {}
+            uploads_dir = self._device_dir(session.session_id, media.device_id) / ".uploads"
+            for metadata_path in uploads_dir.glob("*/upload.json"):
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if metadata.get("capture_id") == str(media.capture_id) and metadata.get("complete"):
+                    receipt = metadata.get("receipt", {})
+                    artifacts[metadata.get("kind", "recording")] = {
+                        "file_path": receipt.get("file_path"),
+                        "size_bytes": receipt.get("size_bytes", metadata.get("size_bytes")),
+                        "sha256": receipt.get("sha256", metadata.get("sha256")),
+                    }
+            take["streams"].append({
+                "capture_id": str(media.capture_id),
+                "device_id": str(media.device_id),
+                "device_name": media.device_name,
+                "role": media.role.value,
+                "mime_type": media.mime_type,
+                "artifacts": artifacts,
+            })
+        for take in takes.values():
+            received = {stream["device_id"] for stream in take["streams"]}
+            take["received_device_ids"] = sorted(received)
+            take["missing_device_ids"] = sorted(set(expected_devices) - received)
+            take["complete"] = not take["missing_device_ids"] and all(
+                {"recording", "telemetry"}.issubset(stream["artifacts"]) for stream in take["streams"]
+            )
+        report = {
+            "schema_version": "1.0",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "session": {
+                "session_id": str(session.session_id),
+                "name": session.name,
+                "created_at": session.created_at.isoformat(),
+                "state": session.state.value,
+            },
+            "expected_devices": expected_devices,
+            "takes": sorted(takes.values(), key=lambda item: item["created_at"] or ""),
+        }
+        report_path = self.root / str(session.session_id) / "report.json"
+        self._write_metadata(report_path, report)
+        return report
+
 
 uploads = UploadService()

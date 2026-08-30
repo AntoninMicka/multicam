@@ -63,6 +63,10 @@ export function listSessionMedia(sessionId: string): Promise<CaptureMedia[]> {
   return fetch(`/api/sessions/${sessionId}/media`).then(json<CaptureMedia[]>)
 }
 
+export function getSessionReport(sessionId: string): Promise<Record<string, unknown>> {
+  return fetch(`/api/sessions/${sessionId}/report`).then(json<Record<string, unknown>>)
+}
+
 export function getTelemetry(url: string): Promise<TelemetrySample[]> {
   return fetch(url).then(json<TelemetrySample[]>)
 }
