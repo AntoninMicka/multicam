@@ -84,7 +84,7 @@ Ke každému videu klient vytváří párovaný telemetrický soubor JSON Lines 
 
 Dvě sekundy po povelu ke spuštění záznamu server automaticky vyšle světelnou klapku. Hlavní kamera zkusí přes `MediaStreamTrack.applyConstraints()` zapnout hardwarovou svítilnu (`torch`), což je určeno především pro Chrome na Androidu. Pokud prohlížeč nebo telefon tuto možnost neposkytne, použije se celoobrazovkový bílý záblesk.
 
-Každý blok z `MediaRecorder` a každá telemetrická událost se průběžně ukládají do IndexedDB. Po reloadu aplikace zobrazí dokončené i přerušené lokální záznamy a dovolí jejich upload zopakovat. Ověřenou lokální kopii lze smazat pouze samostatným tlačítkem a po výslovném potvrzení uživatele.
+Každý blok z `MediaRecorder` a každá telemetrická událost se průběžně ukládají do IndexedDB. Po reloadu aplikace zobrazí dokončené i přerušené lokální záznamy a dovolí jejich upload zopakovat. Kamerový pohled prohledává celý lokální archiv prohlížeče, nikoli pouze záznamy současného `device_id`, takže najde také data ze starší relace, role nebo registrace zařízení. Ověřenou lokální kopii lze smazat pouze samostatným tlačítkem a po výslovném potvrzení uživatele.
 
 REST API dokumentace je za běhu dostupná na `https://localhost:8000/docs`. Manifest relace a časové události mají verzovaná schémata v adresáři [`schemas`](schemas).
 

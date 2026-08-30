@@ -105,10 +105,13 @@ export async function setLocalCaptureState(captureId: string, state: LocalCaptur
   await transactionDone(transaction)
 }
 
-export async function listLocalCaptures(deviceId: string): Promise<LocalCapture[]> {
+export async function listLocalCaptures(deviceId?: string): Promise<LocalCapture[]> {
   const db = await database()
   const transaction = db.transaction('captures', 'readonly')
-  const captures = await requestResult(transaction.objectStore('captures').index('device_id').getAll(deviceId)) as LocalCapture[]
+  const store = transaction.objectStore('captures')
+  const captures = await requestResult(
+    deviceId ? store.index('device_id').getAll(deviceId) : store.getAll(),
+  ) as LocalCapture[]
   await transactionDone(transaction)
   return captures.sort((left, right) => right.created_at.localeCompare(left.created_at))
 }

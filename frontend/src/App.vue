@@ -165,6 +165,8 @@ async function chooseRole(selectedRole: Role) {
     } catch (reason) {
       error.value = reason instanceof Error ? reason.message : 'Seznam relací nelze načíst.'
     }
+  } else {
+    await refreshLocalCaptures()
   }
 }
 
@@ -385,7 +387,7 @@ async function startLocalRecording(requestDetails: Record<string, unknown> = {})
       try {
         await Promise.all([...pendingChunkWrites, ...pendingTelemetryWrites])
         await setLocalCaptureState(currentCaptureId, 'stored')
-        const stored = (await listLocalCaptures(deviceId.value)).find((capture) => capture.capture_id === currentCaptureId)
+        const stored = (await listLocalCaptures()).find((capture) => capture.capture_id === currentCaptureId)
         if (stored) await uploadStoredCapture(stored)
       } catch (reason) {
         error.value = reason instanceof Error ? reason.message : 'Dokončení lokálního záznamu selhalo.'
@@ -418,9 +420,8 @@ function stopLocalRecording() {
 }
 
 async function refreshLocalCaptures() {
-  if (!deviceId.value) return
   try {
-    localCaptures.value = await listLocalCaptures(deviceId.value)
+    localCaptures.value = await listLocalCaptures()
   } catch (reason) {
     error.value = reason instanceof Error ? `Lokální záznamy nelze načíst: ${reason.message}` : 'Lokální záznamy nelze načíst.'
   }
@@ -539,6 +540,10 @@ onBeforeUnmount(() => {
         <h2>Připojit: {{ roleLabel(role) }}</h2>
         <label>Název zařízení <input v-model.trim="deviceName" /></label>
         <p class="muted">Aplikace automaticky použije právě aktivní relaci.</p>
+        <div v-if="localCaptures.length" class="recovery-notice">
+          <strong>Nalezené lokální záznamy: {{ localCaptures.length }}</strong>
+          <small>Z toho {{ localCaptures.filter(capture => capture.state !== 'verified').length }} čeká na odeslání. Po připojení budou dostupné v seznamu kamery.</small>
+        </div>
         <button :disabled="busy || !deviceName" @click="joinCamera">Připojit</button>
       </template>
     </section>
@@ -585,6 +590,7 @@ onBeforeUnmount(() => {
             <div>
               <strong>{{ new Date(capture.created_at).toLocaleString() }}</strong>
               <small>{{ capture.state === 'recording' ? 'přerušený' : capture.state }} · {{ formatBytes(capture.size_bytes) }}</small>
+              <small>{{ roleLabel(capture.role as Role) }} · relace {{ capture.session_id.slice(0, 8) }}</small>
             </div>
             <button v-if="capture.state !== 'verified'" class="small" :disabled="uploadingCaptureId !== null" @click="uploadStoredCapture(capture)">{{ uploadingCaptureId === capture.capture_id ? 'Odesílám…' : 'Odeslat' }}</button>
             <button v-if="capture.state === 'verified'" class="small danger" @click="confirmDeleteCapture(capture)">Smazat z telefonu</button>
