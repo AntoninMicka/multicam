@@ -1,12 +1,15 @@
 # Roadmapa
 
+Stavy: `[x]` implementováno, `[~]` implementováno
+částečně nebo čeká na ověření na cílových zařízeních, `[ ]` dosud není hotovo.
+
 ## 0. Rozhodnutí a ověření zařízení
 
 - [ ] Sepsat cílové telefony, OS, prohlížeče, rozlišení, kodeky a volné místo.
 - [ ] Ověřit `getUserMedia`, `MediaRecorder`, IndexedDB, GPS a `DeviceOrientation` na každém telefonu.
 - [ ] Ověřit oprávnění senzorů, zejména explicitní souhlas na iOS.
 - [ ] Zvolit podporovaný profil videa podle nejslabšího telefonu; nezačínat automaticky ve 4K.
-- [ ] Připravit lokální HTTPS (důvěryhodný certifikát v telefonech), protože kamera, poloha a senzory vyžadují secure context.
+- [~] Připravit lokální HTTPS (generování CA a serverového certifikátu je hotové; zbývá ověřit instalaci a důvěru na všech cílových telefonech).
 - [ ] Změřit dostupné místo a odhadnout velikost jedné relace s bezpečnostní rezervou.
 
 **Hotovo, když:** všech pět cílových telefonů projde krátkým kompatibilitním testem a známe společný formát záznamu.
@@ -24,25 +27,27 @@
 
 ## 2. Lokální záznam videa a telemetrie
 
-- [ ] Inicializovat kameru a nabídnout pouze ověřené kombinace rozlišení/FPS/kodeku.
+- [~] Inicializovat kameru a nabídnout pouze ověřené kombinace rozlišení/FPS/kodeku (kamera se inicializuje a MIME se vybírá podle podpory prohlížeče, chybí uživatelská volba a matice ověřených profilů).
 - [x] Nahrávat přes `MediaRecorder` po kratších blocích, ne jako jediný obří Blob v RAM.
 - [x] Průběžně ukládat bloky do IndexedDB a obnovit stav po reloadu nebo pádu PWA.
 - [x] Zaznamenávat monotónní čas a jen metadata nezbytná pro synchronizaci záznamu.
 - [x] U časových událostí uložit čas vůči začátku lokálního záznamu; nemíchat bez převodu různé časové zdroje.
 - [x] Zaznamenat skutečná nastavení streamu, typ MIME, rozměry, FPS a verzi aplikace.
-- [ ] Ošetřit zamknutí obrazovky, přepnutí aplikace, nedostatek místa a odebrání oprávnění.
+- [~] Ošetřit zamknutí obrazovky, přepnutí aplikace, nedostatek místa a odebrání oprávnění (obnova záznamů z IndexedDB je hotová, provozní hraniční stavy ne).
 
 **Hotovo, když:** telefon pořídí několikaminutový záznam offline a po restartu aplikace jej stále nabídne k odeslání.
 
 ## 3. Řízení a synchronizace
 
-- [ ] Implementovat přes WebSocket povely `ARM`, `START`, `STOP` s potvrzením od každého klienta.
+- [~] Implementovat přes WebSocket povely `ARM`, `START`, `STOP` s potvrzením od každého klienta (`START`/`STOP` fungují z pultu i hlavní kamery, chybí `ARM`, ACK a timeouty).
 - [ ] Změřit offset a round-trip time hodin mezi telefony a serverem opakovaným handshake.
-- [ ] Ukládat plánovaný i skutečný lokální čas startu/stopu; síťový povel nepovažovat za současný okamžik na všech telefonech.
-- [ ] Použít dobře viditelný záblesk nebo LED panel jako obrazovou klapku v zorném poli kamer.
+- [~] Ukládat plánovaný i skutečný lokální čas startu/stopu (ukládá se čas přijetí povelu, lokální monotónní i UTC čas; chybí plánovaný start a síťová korekce).
+- [~] Použít dobře viditelný záblesk nebo LED panel jako obrazovou klapku (automatická klapka po 2 s, hardwarová svítilna hlavní kamery a obrazovkový fallback jsou implementované; zbývá terénní ověření).
 - [ ] Přidat volitelnou zvukovou klapku pro záložní synchronizaci.
 - [ ] V postprocessingu detekovat klapku ve videích a uložit korekci časové osy.
-- [ ] Ověřit omezení ovládání svítilny v cílových mobilních prohlížečích; připravit externí světlo jako spolehlivý fallback.
+- [~] Ověřit omezení ovládání svítilny v cílových mobilních prohlížečích (Chrome/Android je podporován experimentálně; externí světlo a testovací matice chybí).
+- [x] Označit všechny kamerové záznamy ze stejného startu/klapky společným `take_id` a seskupit je na režisérském pultu.
+- [~] Přehrávat skupinu kamer jedním tlačítkem se souběžnou telemetrií (Firefox funguje, Chromium jen částečně; ostatní zvukové stopy jsou ztlumené).
 
 **Hotovo, když:** pět krátkých záznamů lze po klapce zarovnat na konkrétní snímek a je znám rozptyl synchronizace.
 
@@ -54,17 +59,17 @@
 - [x] Po dokončení ověřit počet bloků, velikost a SHA-256 videa i telemetrie.
 - [x] Server vrátí podepsané/identifikovatelné potvrzení o převzetí.
 - [x] Smazání v telefonu povolit až po potvrzení; výchozí chování má vyžadovat vědomé potvrzení uživatele.
-- [ ] Zobrazit průběh, rychlost, zbývající čas a chyby jednotlivých telefonů.
+- [~] Zobrazit průběh, rychlost, zbývající čas a chyby jednotlivých telefonů (procenta a základní chyby jsou hotové, chybí rychlost a odhad času).
 
 **Hotovo, když:** přerušený přenos pokračuje bez ztráty dat a lokální kopie nezmizí před úspěšnou verifikací.
 
 ## 5. Laboratorní a síťové testy
 
-- [ ] Unit testy schémat, stavového automatu, checksumů a opakovaných uploadů.
+- [~] Unit testy schémat, stavového automatu, checksumů a opakovaných uploadů (existuje 6 backendových API testů včetně idempotentního uploadu a obnovy relace; pokrytí stavů a frontend chybí).
 - [ ] Integrační test celé relace s jedním telefonem, poté s pěti.
 - [ ] Test vypnutí Wi-Fi, pádu serveru, reloadu PWA, plného disku a vybití telefonu.
 - [ ] Změřit propustnost staršího AP a dobu přenosu reálných souborů.
-- [ ] Ověřit současný upload; případně telefony řadit do fronty, aby AP nebyl zahlcen.
+- [~] Ověřit současný upload; klienti nahrávají souběžně, ale chybí měření a případná fronta.
 - [ ] Ověřit teplotu, throttling a spotřebu baterie při cílové délce záznamu.
 - [ ] Archivovat protokol testu a přesné verze zařízení/aplikace.
 
@@ -81,9 +86,9 @@
 
 ## 7. Výstup relace
 
-- [ ] Uložit všechna videa do jednoho adresáře relace s jednoznačnými názvy zařízení.
-- [ ] Uložit manifest se startovními časy, korekcemi podle klapky, délkami, velikostmi a checksumy.
-- [ ] Zachovat původní soubory beze změn; případné synchronizované kopie ukládat odděleně.
+- [~] Uložit všechna videa pod jeden adresář relace a zařízení (struktura existuje, názvy souborů zatím nejsou lidsky čitelné).
+- [~] Uložit manifest se startovními časy, korekcemi podle klapky, délkami, velikostmi a checksumy (perzistentní manifest relace a metadata uploadů existují, souhrnný výstupní manifest ne).
+- [x] Zachovat původní soubory beze změn; synchronizované kopie se zatím nevytvářejí.
 - [ ] Vytvořit jednoduchý report úplnosti a výsledného časového posunu každého videa.
 
 **Hotovo, když:** centrální uzel obsahuje úplnou, ověřenou a synchronizovanou sadu videí připravenou pro použití jiným projektem.
@@ -91,7 +96,7 @@
 ## Výslovně mimo scope
 
 - [ ] Kalibrace kamer a mapování prostorové geometrie.
-- [ ] GPS/orientační telemetrie, pokud není přímo potřebná k synchronizaci.
+- [x] GPS/orientační telemetrie byla na přání zahrnuta: GNSS, orientace a dostupný zoom se ukládají a zobrazují synchronně s videem.
 - [ ] Detekce objektů a osob, pose estimation a tracking.
 - [ ] Rekonstrukce scény, asociační matice a vícekamerová fúze.
 - [ ] AI pipeline, ComfyUI, Ollama a optimalizace v C++.
@@ -106,3 +111,19 @@
 - [ ] Dokumentace označení telefonů a jejich úhlů záběru.
 - [ ] Ostrá relace a případně jedna bezpečnostní opakovaná relace.
 - [ ] Dvojí kontrola checksumů a záloha na druhé úložiště před smazáním z telefonů.
+
+## Doporučené další práce
+
+1. **ACK a stavový protokol `ARM` → `START` → `STOP`.** Pult musí před natáčením
+   poznat, která kamera povel přijala, skutečně začala nahrávat nebo selhala.
+2. **Diagnostika a synchronizace skupinového přehrávače v Chromiu.** Zobrazit stav
+   načtení/dekódování každého streamu a zavést jeden master čas, podle kterého se
+   ostatní videa průběžně dorovnají.
+3. **Ochrana záznamu na telefonu.** Wake Lock, reakce na `visibilitychange`, kontrola
+   volného místa před startem a jasná chyba při ztrátě kamery, mikrofonu či úložiště.
+4. **Měřený síťový handshake.** Průběžně ukládat offset a RTT každé kamery; tím vznikne
+   lepší hrubé zarovnání i diagnostika před obrazovou detekcí klapky.
+5. **Integrační zkouška na reálných telefonech.** Nejdřív dvě kamery, pak cílový počet;
+   otestovat restart, výpadek Wi-Fi, paralelní upload, teplotu a několikaminutový záznam.
+6. **Výstupní manifest a report úplnosti.** Pro každou klapku shrnout očekávané a
+   přijaté kamery, délky, velikosti, checksumy a později korekce časových os.

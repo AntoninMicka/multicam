@@ -110,7 +110,11 @@ Režisérský pult nabízí seznam uložených relací. Po výběru zobrazí mat
 
 ## Aktuální stav
 
-Fáze 1 obsahuje in-memory správu relací a zařízení. Restart serveru proto relace smaže; perzistentní úložiště bude doplněno spolu se záznamovou a uploadovací částí.
+Relace a zařízení se ukládají do manifestů na disku a po restartu serveru se znovu načtou.
+Záznam, telemetrie, obnovitelný chunkovaný upload, kontrola integrity, historie relací,
+lokální HTTPS a izolovaný hotspot jsou implementované. Nedokončené oblasti a pořadí
+dalších prací jsou vedené v [roadmapě](ROADMAP.md), zejména potvrzování řídicích povelů,
+měření časového offsetu, odolnost mobilního záznamu a terénní integrační testy.
 
 ## Definice úspěchu MVP
 
