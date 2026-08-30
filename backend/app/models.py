@@ -101,3 +101,15 @@ class UploadReceipt(BaseModel):
     size_bytes: int
     sha256: str
     verified: bool = True
+
+
+class CaptureMedia(BaseModel):
+    capture_id: UUID
+    device_id: UUID
+    device_name: str
+    role: DeviceRole
+    mime_type: str
+    size_bytes: int
+    created_at: datetime | None = None
+    video_url: str
+    telemetry_url: str

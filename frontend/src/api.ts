@@ -21,6 +21,18 @@ export interface UploadReceipt {
   verified: boolean
 }
 
+export interface CaptureMedia {
+  capture_id: string
+  device_id: string
+  device_name: string
+  role: Device['role']
+  mime_type: string
+  size_bytes: number
+  created_at: string | null
+  video_url: string
+  telemetry_url: string
+}
+
 async function json<T>(response: Response): Promise<T> {
   if (!response.ok) throw new Error((await response.json()).detail ?? 'Požadavek selhal')
   return response.json() as Promise<T>
@@ -34,12 +46,32 @@ export function createSession(name: string): Promise<Session> {
   }).then(json<Session>)
 }
 
+export function listSessions(): Promise<Session[]> {
+  return fetch('/api/sessions').then(json<Session[]>)
+}
+
 export function getSession(id: string): Promise<Session> {
   return fetch(`/api/sessions/${id}`).then(json<Session>)
 }
 
 export function getCurrentSession(): Promise<Session> {
   return fetch('/api/sessions/current').then(json<Session>)
+}
+
+export function listSessionMedia(sessionId: string): Promise<CaptureMedia[]> {
+  return fetch(`/api/sessions/${sessionId}/media`).then(json<CaptureMedia[]>)
+}
+
+export function getTelemetry(url: string): Promise<TelemetrySample[]> {
+  return fetch(url).then(json<TelemetrySample[]>)
+}
+
+export interface TelemetrySample {
+  event: string
+  recording_offset_ms: number | null
+  camera?: { zoom_ratio: number | null }
+  position?: { latitude: number; longitude: number; accuracy_m: number } | null
+  orientation?: { alpha_deg: number | null; beta_deg: number | null; gamma_deg: number | null } | null
 }
 
 export function registerDevice(

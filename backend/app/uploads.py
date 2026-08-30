@@ -2,10 +2,11 @@ import asyncio
 import hashlib
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from .models import UploadCreate, UploadReceipt, UploadStatus
+from .models import CaptureMedia, Session, UploadCreate, UploadReceipt, UploadStatus
 
 
 class UploadError(Exception):
@@ -62,7 +63,12 @@ class UploadService:
         upload_id = uuid4()
         upload_dir = self._upload_dir(session_id, device_id, upload_id)
         (upload_dir / "chunks").mkdir(parents=True)
-        metadata = {"upload_id": str(upload_id), **data.model_dump(mode="json"), "complete": False}
+        metadata = {
+            "upload_id": str(upload_id),
+            **data.model_dump(mode="json"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "complete": False,
+        }
         self._write_metadata(upload_dir / "upload.json", metadata)
         return self.status(session_id, device_id, upload_id)
 
@@ -168,6 +174,46 @@ class UploadService:
             if metadata.get("capture_id") == str(capture_id) and metadata.get("complete"):
                 completed.add(metadata.get("kind", "recording"))
         return completed == {"recording", "telemetry"}
+
+    def list_media(self, session: Session) -> list[CaptureMedia]:
+        result: list[CaptureMedia] = []
+        for device in session.devices.values():
+            uploads_dir = self._device_dir(session.session_id, device.device_id) / ".uploads"
+            captures: dict[str, dict[str, dict]] = {}
+            for metadata_path in uploads_dir.glob("*/upload.json"):
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if metadata.get("complete") and metadata.get("receipt"):
+                    captures.setdefault(metadata["capture_id"], {})[metadata.get("kind", "recording")] = metadata
+            for capture_id, artifacts in captures.items():
+                if set(artifacts) != {"recording", "telemetry"}:
+                    continue
+                recording = artifacts["recording"]
+                result.append(CaptureMedia(
+                    capture_id=UUID(capture_id),
+                    device_id=device.device_id,
+                    device_name=device.name,
+                    role=device.role,
+                    mime_type=recording["mime_type"],
+                    size_bytes=recording["size_bytes"],
+                    created_at=recording.get("created_at"),
+                    video_url=f"/api/media/{session.session_id}/{device.device_id}/{capture_id}/video",
+                    telemetry_url=f"/api/media/{session.session_id}/{device.device_id}/{capture_id}/telemetry",
+                ))
+        return sorted(result, key=lambda item: item.created_at or datetime.min.replace(tzinfo=timezone.utc))
+
+    def artifact_path(self, session_id: UUID, device_id: UUID, capture_id: UUID, kind: str) -> Path:
+        uploads_dir = self._device_dir(session_id, device_id) / ".uploads"
+        for metadata_path in uploads_dir.glob("*/upload.json"):
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if (
+                metadata.get("capture_id") == str(capture_id)
+                and metadata.get("kind", "recording") == kind
+                and metadata.get("complete")
+            ):
+                path = self.root / metadata["receipt"]["file_path"]
+                if path.is_file() and path.resolve().is_relative_to(self.root):
+                    return path
+        raise UploadNotFoundError(capture_id)
 
 
 uploads = UploadService()

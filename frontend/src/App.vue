@@ -1,6 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
-import { createSession, getCurrentSession, getSession, registerDevice, sessionSocket, uploadArtifact, type DeviceCapabilities } from './api'
+import {
+  createSession,
+  getCurrentSession,
+  getSession,
+  listSessionMedia,
+  listSessions,
+  registerDevice,
+  sessionSocket,
+  uploadArtifact,
+  type CaptureMedia,
+  type DeviceCapabilities,
+} from './api'
+import CapturePlayer from './CapturePlayer.vue'
 import {
   appendRecordingChunk,
   appendTelemetryEvent,
@@ -30,6 +42,8 @@ const uploadProgress = ref<number | null>(null)
 const uploadVerified = ref(false)
 const deviceUploadProgress = ref<Record<string, number>>({})
 const localCaptures = ref<LocalCapture[]>([])
+const availableSessions = ref<Session[]>([])
+const sessionMedia = ref<CaptureMedia[]>([])
 const recordingStarting = ref(false)
 const recordingFinalizing = ref(false)
 const uploadingCaptureId = ref<string | null>(null)
@@ -124,7 +138,10 @@ function connectSocket(id: string, cameraId?: string) {
   socket = sessionSocket(id, cameraId)
   socket.onmessage = (event) => {
     const message = JSON.parse(event.data)
-    if (message.type === 'session.snapshot' || message.type === 'session.updated') session.value = message.payload
+    if (message.type === 'session.snapshot' || message.type === 'session.updated') {
+      session.value = message.payload
+      if (role.value === 'director') void loadSessionMedia()
+    }
     if (message.type === 'clap.trigger' && role.value !== 'director' && recording.value) {
       recordTelemetry('sync_marker', message.payload)
       if (role.value === 'main_camera') flashClap()
@@ -139,12 +156,48 @@ function connectSocket(id: string, cameraId?: string) {
   socket.onerror = () => (error.value = 'Spojení se serverem bylo přerušeno.')
 }
 
+async function chooseRole(selectedRole: Role) {
+  role.value = selectedRole
+  error.value = ''
+  if (selectedRole === 'director') {
+    try {
+      availableSessions.value = await listSessions()
+    } catch (reason) {
+      error.value = reason instanceof Error ? reason.message : 'Seznam relací nelze načíst.'
+    }
+  }
+}
+
+async function selectSession(selected: Session) {
+  session.value = await getSession(selected.session_id)
+  connectSocket(selected.session_id)
+  await loadSessionMedia()
+}
+
+async function backToSessions() {
+  socket?.close()
+  socket = null
+  session.value = null
+  sessionMedia.value = []
+  availableSessions.value = await listSessions()
+}
+
+async function loadSessionMedia() {
+  if (!session.value) return
+  try {
+    sessionMedia.value = await listSessionMedia(session.value.session_id)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'Záznamy relace nelze načíst.'
+  }
+}
+
 async function startDirector() {
   busy.value = true
   error.value = ''
   try {
     session.value = await createSession(sessionName.value)
     connectSocket(session.value.session_id)
+    await loadSessionMedia()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Relaci nelze vytvořit.'
   } finally {
@@ -463,15 +516,21 @@ onBeforeUnmount(() => {
 
     <section v-if="!role" class="card role-picker">
       <h2>Jak chcete zařízení použít?</h2>
-      <button @click="role = 'director'">Režisérský pult</button>
-      <button class="secondary" @click="role = 'main_camera'">Hlavní kamera</button>
-      <button class="secondary" @click="role = 'top_camera'">Top-over kamera</button>
-      <button class="secondary" @click="role = 'secondary_camera'">Vedlejší kamera</button>
+      <button @click="chooseRole('director')">Režisérský pult</button>
+      <button class="secondary" @click="chooseRole('main_camera')">Hlavní kamera</button>
+      <button class="secondary" @click="chooseRole('top_camera')">Top-over kamera</button>
+      <button class="secondary" @click="chooseRole('secondary_camera')">Vedlejší kamera</button>
     </section>
 
     <section v-else-if="!session" class="card">
       <button class="back" @click="role = null">← změnit roli</button>
       <template v-if="role === 'director'">
+        <div v-if="availableSessions.length" class="session-list">
+          <h2>Relace</h2>
+          <button v-for="item in availableSessions" :key="item.session_id" class="session-item" @click="selectSession(item)">
+            <span>{{ item.name }}</span><small>{{ new Date(item.created_at).toLocaleString() }} · {{ Object.keys(item.devices).length }} kamer</small>
+          </button>
+        </div>
         <h2>Nová relace</h2>
         <label>Název <input v-model="sessionName" /></label>
         <button :disabled="busy" @click="startDirector">Založit relaci</button>
@@ -488,9 +547,10 @@ onBeforeUnmount(() => {
       <div class="session-heading"><div><span class="eyebrow">{{ roleLabel(role) }}</span><h2>{{ session.name }}</h2></div><span class="status">{{ session.state }}</span></div>
 
       <template v-if="role === 'director'">
+        <button class="back" @click="backToSessions">← seznam relací</button>
         <h3>Zařízení ({{ devices.length }})</h3>
         <div class="record-controls">
-          <button v-if="session.state !== 'recording'" :disabled="!devices.length" @click="sendRecordingCommand('recording.start')">● Spustit záznam</button>
+          <button v-if="session.state !== 'recording'" :disabled="!devices.some(device => device.connected)" @click="sendRecordingCommand('recording.start')">● Spustit záznam</button>
           <button v-else class="stop" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
         </div>
         <button class="clap-button" :disabled="!devices.some(device => device.role === 'main_camera' && device.connected)" @click="triggerClap">Spustit světelnou klapku</button>
@@ -499,6 +559,11 @@ onBeforeUnmount(() => {
           <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small></div>
           <span :class="['dot', { offline: !device.connected }]">{{ device.connected ? (device.state === 'uploading' ? `přenos ${deviceUploadProgress[device.device_id] ?? 0} %` : device.state) : 'odpojeno' }}</span>
         </article>
+        <div class="media-heading"><h3>Záznamy ({{ sessionMedia.length }})</h3><button class="small" @click="loadSessionMedia">Obnovit</button></div>
+        <p v-if="!sessionMedia.length" class="muted">Relace zatím nemá ověřené záznamy.</p>
+        <div v-else class="stream-matrix">
+          <CapturePlayer v-for="capture in sessionMedia" :key="capture.capture_id" :capture="capture" />
+        </div>
       </template>
       <template v-else>
         <video ref="preview" class="preview" autoplay muted playsinline></video>

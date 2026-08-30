@@ -1,14 +1,17 @@
 import asyncio
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .models import (
     Device,
+    CaptureMedia,
     DeviceRegistration,
     DeviceState,
     Session,
@@ -154,6 +157,33 @@ async def complete_upload(session_id: UUID, device_id: UUID, upload_id: UUID) ->
     updated = await store.set_device_state(session_id, device_id, next_state)
     await connections.broadcast(session_id, {"type": "session.updated", "payload": updated.model_dump(mode="json")})
     return receipt
+
+
+@app.get("/api/sessions/{session_id}/media", response_model=list[CaptureMedia])
+async def list_session_media(session_id: UUID) -> list[CaptureMedia]:
+    try:
+        session = await store.get(session_id)
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Session not found") from error
+    return uploads.list_media(session)
+
+
+@app.get("/api/media/{session_id}/{device_id}/{capture_id}/video", response_class=FileResponse)
+async def get_recording_media(session_id: UUID, device_id: UUID, capture_id: UUID) -> FileResponse:
+    try:
+        path = uploads.artifact_path(session_id, device_id, capture_id, "recording")
+    except UploadNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Recording not found") from error
+    return FileResponse(path)
+
+
+@app.get("/api/media/{session_id}/{device_id}/{capture_id}/telemetry")
+async def get_recording_telemetry(session_id: UUID, device_id: UUID, capture_id: UUID) -> list[dict]:
+    try:
+        path = uploads.artifact_path(session_id, device_id, capture_id, "telemetry")
+    except UploadNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Telemetry not found") from error
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 @app.websocket("/api/ws/{session_id}")

@@ -1,15 +1,26 @@
 import asyncio
 import hashlib
+from uuid import UUID
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+from app.store import SessionStore, store
 from app.uploads import uploads
 
 
 async def request(method: str, url: str, **kwargs):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         return await client.request(method, url, **kwargs)
+
+
+@pytest.fixture(autouse=True)
+def isolated_storage(tmp_path) -> None:
+    root = tmp_path / "sessions"
+    store._sessions.clear()
+    store.root = root
+    uploads.root = root
 
 
 def test_health() -> None:
@@ -55,7 +66,6 @@ def test_unknown_session_is_404() -> None:
 
 
 def test_chunked_upload_is_idempotent_and_verified(tmp_path) -> None:
-    uploads.root = tmp_path
     session = asyncio.run(request("POST", "/api/sessions", json={"name": "Upload test"})).json()
     device = asyncio.run(request(
         "POST",
@@ -91,7 +101,7 @@ def test_chunked_upload_is_idempotent_and_verified(tmp_path) -> None:
     receipt = asyncio.run(request("POST", complete_url)).json()
     assert receipt["verified"] is True
     assert receipt["sha256"] == digest
-    assert (tmp_path / receipt["file_path"]).read_bytes() == content
+    assert (uploads.root / receipt["file_path"]).read_bytes() == content
     assert asyncio.run(request("POST", complete_url)).json()["receipt_id"] == receipt["receipt_id"]
 
     telemetry = b'{"schema_version":"1.0","event":"recording_started","monotonic_ms":1}\n'
@@ -111,7 +121,21 @@ def test_chunked_upload_is_idempotent_and_verified(tmp_path) -> None:
     assert asyncio.run(request("PUT", telemetry_url, content=telemetry, headers=headers)).status_code == 200
     telemetry_receipt = asyncio.run(request("POST", f"{base}/{telemetry_upload['upload_id']}/complete")).json()
     assert telemetry_receipt["kind"] == "telemetry"
-    assert (tmp_path / telemetry_receipt["file_path"]).read_bytes() == telemetry
+    assert (uploads.root / telemetry_receipt["file_path"]).read_bytes() == telemetry
 
     current_session = asyncio.run(request("GET", f"/api/sessions/{session['session_id']}")).json()
     assert current_session["devices"][device["device_id"]]["state"] == "verified"
+
+    media = asyncio.run(request("GET", f"/api/sessions/{session['session_id']}/media")).json()
+    assert len(media) == 1
+    assert media[0]["capture_id"] == receipt["capture_id"]
+    assert uploads.artifact_path(
+        UUID(session["session_id"]), UUID(device["device_id"]), UUID(receipt["capture_id"]), "recording"
+    ).read_bytes() == content
+    telemetry_text = uploads.artifact_path(
+        UUID(session["session_id"]), UUID(device["device_id"]), UUID(receipt["capture_id"]), "telemetry"
+    ).read_text()
+    assert '"event":"recording_started"' in telemetry_text
+    assert (uploads.root / session["session_id"] / "session.json").is_file()
+    restored = SessionStore(uploads.root)
+    assert asyncio.run(restored.get(UUID(session["session_id"]))).name == "Upload test"

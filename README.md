@@ -86,7 +86,9 @@ Dvě sekundy po povelu ke spuštění záznamu server automaticky vyšle světel
 
 Každý blok z `MediaRecorder` a každá telemetrická událost se průběžně ukládají do IndexedDB. Po reloadu aplikace zobrazí dokončené i přerušené lokální záznamy a dovolí jejich upload zopakovat. Ověřenou lokální kopii lze smazat pouze samostatným tlačítkem a po výslovném potvrzení uživatele.
 
-REST API dokumentace je za běhu dostupná na `http://localhost:8000/docs`. Manifest relace a časové události mají verzovaná schémata v adresáři [`schemas`](schemas).
+REST API dokumentace je za běhu dostupná na `https://localhost:8000/docs`. Manifest relace a časové události mají verzovaná schémata v adresáři [`schemas`](schemas).
+
+Režisérský pult nabízí seznam uložených relací. Po výběru zobrazí matici všech ověřených kamerových záznamů. Každý přehrávač načte párovanou telemetrii a podle aktuálního času videa zobrazuje nejbližší číselný vzorek: zoom, GNSS souřadnice, přesnost a orientační úhly. Manifesty relací se ukládají jako `data/sessions/<session_id>/session.json`, takže seznam přežije restart serveru.
 
 ## Aktuální stav
 
