@@ -112,4 +112,4 @@ class CaptureMedia(BaseModel):
     size_bytes: int
     created_at: datetime | None = None
     video_url: str
-    telemetry_url: str
+    telemetry_url: str | None = None

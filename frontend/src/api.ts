@@ -30,7 +30,7 @@ export interface CaptureMedia {
   size_bytes: number
   created_at: string | null
   video_url: string
-  telemetry_url: string
+  telemetry_url: string | null
 }
 
 async function json<T>(response: Response): Promise<T> {

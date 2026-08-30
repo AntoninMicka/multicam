@@ -183,11 +183,19 @@ class UploadService:
             for metadata_path in uploads_dir.glob("*/upload.json"):
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
                 if metadata.get("complete") and metadata.get("receipt"):
-                    captures.setdefault(metadata["capture_id"], {})[metadata.get("kind", "recording")] = metadata
+                    capture_id = metadata.get("capture_id", metadata["upload_id"])
+                    captures.setdefault(capture_id, {})[metadata.get("kind", "recording")] = metadata
             for capture_id, artifacts in captures.items():
-                if set(artifacts) != {"recording", "telemetry"}:
+                if "recording" not in artifacts:
                     continue
                 recording = artifacts["recording"]
+                receipt_path = self.root / recording["receipt"]["file_path"]
+                created_at = recording.get("created_at")
+                if created_at is None and receipt_path.exists():
+                    created_at = datetime.fromtimestamp(receipt_path.stat().st_mtime, timezone.utc)
+                telemetry_url = None
+                if "telemetry" in artifacts:
+                    telemetry_url = f"/api/media/{session.session_id}/{device.device_id}/{capture_id}/telemetry"
                 result.append(CaptureMedia(
                     capture_id=UUID(capture_id),
                     device_id=device.device_id,
@@ -195,9 +203,9 @@ class UploadService:
                     role=device.role,
                     mime_type=recording["mime_type"],
                     size_bytes=recording["size_bytes"],
-                    created_at=recording.get("created_at"),
+                    created_at=created_at,
                     video_url=f"/api/media/{session.session_id}/{device.device_id}/{capture_id}/video",
-                    telemetry_url=f"/api/media/{session.session_id}/{device.device_id}/{capture_id}/telemetry",
+                    telemetry_url=telemetry_url,
                 ))
         return sorted(result, key=lambda item: item.created_at or datetime.min.replace(tzinfo=timezone.utc))
 
@@ -206,7 +214,7 @@ class UploadService:
         for metadata_path in uploads_dir.glob("*/upload.json"):
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             if (
-                metadata.get("capture_id") == str(capture_id)
+                metadata.get("capture_id", metadata.get("upload_id")) == str(capture_id)
                 and metadata.get("kind", "recording") == kind
                 and metadata.get("complete")
             ):

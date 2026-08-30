@@ -8,6 +8,10 @@ const currentTimeMs = ref(0)
 const loadingError = ref('')
 
 onMounted(async () => {
+  if (!props.capture.telemetry_url) {
+    loadingError.value = 'Tato starší relace nemá telemetrii.'
+    return
+  }
   try {
     samples.value = (await getTelemetry(props.capture.telemetry_url))
       .filter((sample) => sample.recording_offset_ms !== null)

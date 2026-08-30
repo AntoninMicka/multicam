@@ -1,5 +1,7 @@
 import asyncio
 import hashlib
+import json
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -7,7 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 from app.store import SessionStore, store
-from app.uploads import uploads
+from app.uploads import UploadService, uploads
 
 
 async def request(method: str, url: str, **kwargs):
@@ -63,6 +65,35 @@ def test_create_session_and_register_device() -> None:
 def test_unknown_session_is_404() -> None:
     response = asyncio.run(request("GET", "/api/sessions/00000000-0000-0000-0000-000000000000"))
     assert response.status_code == 404
+
+
+def test_legacy_session_without_manifest_is_recovered(tmp_path) -> None:
+    session_id = UUID("11111111-1111-4111-8111-111111111111")
+    device_id = UUID("22222222-2222-4222-8222-222222222222")
+    upload_id = UUID("33333333-3333-4333-8333-333333333333")
+    root = tmp_path / "sessions"
+    relative_video = Path(str(session_id)) / "devices" / str(device_id) / "recordings" / f"recording-{upload_id}.webm"
+    video = root / relative_video
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"legacy video")
+    metadata_path = root / str(session_id) / "devices" / str(device_id) / ".uploads" / str(upload_id) / "upload.json"
+    metadata_path.parent.mkdir(parents=True)
+    metadata_path.write_text(json.dumps({
+        "upload_id": str(upload_id),
+        "file_name": "recording.webm",
+        "mime_type": "video/webm",
+        "size_bytes": video.stat().st_size,
+        "complete": True,
+        "receipt": {"file_path": str(relative_video)},
+    }))
+
+    recovered_store = SessionStore(root)
+    recovered = asyncio.run(recovered_store.get(session_id))
+    assert recovered.name.startswith("Obnovená relace")
+    assert (root / str(session_id) / "session.json").is_file()
+    media = UploadService(root).list_media(recovered)
+    assert len(media) == 1
+    assert media[0].telemetry_url is None
 
 
 def test_chunked_upload_is_idempotent_and_verified(tmp_path) -> None:
