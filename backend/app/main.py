@@ -196,6 +196,26 @@ async def get_recording_media(session_id: UUID, device_id: UUID, capture_id: UUI
     return FileResponse(path)
 
 
+@app.delete("/api/media/{session_id}/{device_id}/{capture_id}")
+async def delete_recording(session_id: UUID, device_id: UUID, capture_id: UUID) -> dict:
+    await require_device(session_id, device_id)
+    if not uploads.delete_capture(session_id, device_id, capture_id):
+        raise HTTPException(status_code=404, detail="Recording not found")
+    return {"deleted": True, "capture_id": str(capture_id)}
+
+
+@app.delete("/api/sessions/{session_id}/takes/{take_id}")
+async def delete_take(session_id: UUID, take_id: UUID) -> dict:
+    try:
+        session = await store.get(session_id)
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Session not found") from error
+    deleted = uploads.delete_take(session, take_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Recording group not found")
+    return {"deleted": deleted, "take_id": str(take_id)}
+
+
 @app.get("/api/media/{session_id}/{device_id}/{capture_id}/telemetry")
 async def get_recording_telemetry(session_id: UUID, device_id: UUID, capture_id: UUID) -> list[dict]:
     try:

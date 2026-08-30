@@ -48,5 +48,6 @@ button.session-item { display: flex; align-items: center; justify-content: space
 .media-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 30px; }
 .media-heading h3 { margin: 0; }
 .heading-actions { display: flex; gap: 8px; }
+.archive-button { width: 100%; margin: 0 0 22px; }
 .take-list { display: grid; gap: 22px; margin-top: 14px; }
 @media (max-width: 520px) { main { padding-top: 28px; } .session-heading { align-items: flex-start; } }

@@ -90,6 +90,7 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 - [~] Uložit manifest se startovními časy, korekcemi podle klapky, délkami, velikostmi a checksumy (perzistentní manifest relace a metadata uploadů existují, souhrnný výstupní manifest ne).
 - [x] Zachovat původní soubory beze změn; synchronizované kopie se zatím nevytvářejí.
 - [~] Vytvořit jednoduchý report úplnosti a výsledného časového posunu každého videa (JSON report po klapkách obsahuje očekávané/chybějící kamery, soubory, velikosti a SHA-256; chybí výsledná korekce z detekce obrazu).
+- [x] Zobrazit samostatný archiv záznamů napříč relacemi a umožnit potvrzené smazání jednotlivého záběru nebo celé klapky včetně telemetrie.
 
 **Hotovo, když:** centrální uzel obsahuje úplnou, ověřenou a synchronizovanou sadu videí připravenou pro použití jiným projektem.
 

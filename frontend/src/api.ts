@@ -67,6 +67,14 @@ export function getSessionReport(sessionId: string): Promise<Record<string, unkn
   return fetch(`/api/sessions/${sessionId}/report`).then(json<Record<string, unknown>>)
 }
 
+export function deleteServerCapture(sessionId: string, deviceId: string, captureId: string): Promise<{ deleted: boolean }> {
+  return fetch(`/api/media/${sessionId}/${deviceId}/${captureId}`, { method: 'DELETE' }).then(json<{ deleted: boolean }>)
+}
+
+export function deleteServerTake(sessionId: string, takeId: string): Promise<{ deleted: number }> {
+  return fetch(`/api/sessions/${sessionId}/takes/${takeId}`, { method: 'DELETE' }).then(json<{ deleted: number }>)
+}
+
 export function getTelemetry(url: string): Promise<TelemetrySample[]> {
   return fetch(url).then(json<TelemetrySample[]>)
 }

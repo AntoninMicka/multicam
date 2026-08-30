@@ -186,3 +186,12 @@ def test_chunked_upload_is_idempotent_and_verified(tmp_path) -> None:
     assert (uploads.root / session["session_id"] / "session.json").is_file()
     restored = SessionStore(uploads.root)
     assert asyncio.run(restored.get(UUID(session["session_id"]))).name == "Upload test"
+
+    deleted = asyncio.run(request(
+        "DELETE", f"/api/sessions/{session['session_id']}/takes/{media[0]['take_id']}"
+    ))
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] == 1
+    assert asyncio.run(request("GET", f"/api/sessions/{session['session_id']}/media")).json() == []
+    assert not (uploads.root / receipt["file_path"]).exists()
+    assert not (uploads.root / telemetry_receipt["file_path"]).exists()

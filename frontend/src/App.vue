@@ -14,6 +14,7 @@ import {
   type DeviceCapabilities,
 } from './api'
 import CaptureGroup from './CaptureGroup.vue'
+import ArchivePage from './ArchivePage.vue'
 import HotspotPanel from './HotspotPanel.vue'
 import {
   appendRecordingChunk,
@@ -29,6 +30,7 @@ import type { Session } from './types'
 
 type Role = 'director' | 'main_camera' | 'top_camera' | 'secondary_camera'
 const role = ref<Role | null>(null)
+const archiveOpen = ref(false)
 const session = ref<Session | null>(null)
 const sessionName = ref('Zkušební relace')
 const deviceName = ref(`Telefon ${Math.floor(Math.random() * 90 + 10)}`)
@@ -699,10 +701,13 @@ onBeforeUnmount(() => {
       <button class="secondary" @click="chooseRole('secondary_camera')">Vedlejší kamera</button>
     </section>
 
+    <ArchivePage v-else-if="role === 'director' && archiveOpen" @close="archiveOpen = false" />
+
     <section v-else-if="!session" class="card">
       <button class="back" @click="role = null">← změnit roli</button>
       <template v-if="role === 'director'">
         <HotspotPanel />
+        <button class="archive-button secondary" @click="archiveOpen = true">Archiv všech záznamů</button>
         <div v-if="availableSessions.length" class="session-list">
           <h2>Relace</h2>
           <button v-for="item in availableSessions" :key="item.session_id" class="session-item" @click="selectSession(item)">
@@ -730,6 +735,7 @@ onBeforeUnmount(() => {
 
       <template v-if="role === 'director'">
         <button class="back" @click="backToSessions">← seznam relací</button>
+        <button class="archive-button secondary" @click="archiveOpen = true">Archiv všech záznamů</button>
         <HotspotPanel />
         <h3>Zařízení ({{ devices.length }})</h3>
         <div class="record-controls">

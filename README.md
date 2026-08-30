@@ -108,6 +108,8 @@ REST API dokumentace je za běhu dostupná na `https://localhost:8000/docs`. Man
 
 Režisérský pult nabízí seznam uložených relací. Po výběru zobrazí matici všech ověřených kamerových záznamů. Každý přehrávač načte párovanou telemetrii a podle aktuálního času videa zobrazuje nejbližší číselný vzorek: zoom, GNSS souřadnice, přesnost a orientační úhly. Manifesty relací se ukládají jako `data/sessions/<session_id>/session.json`, takže seznam přežije restart serveru.
 
+Samostatný archiv režisérského pultu zobrazuje všechny záznamy napříč relacemi seskupené podle klapky. Jednotlivý záběr i celou skupinu lze po výslovném potvrzení odstranit ze serveru; odstraní se video, párovaná telemetrie i příslušná uploadová metadata.
+
 ## Aktuální stav
 
 Relace a zařízení se ukládají do manifestů na disku a po restartu serveru se znovu načtou.

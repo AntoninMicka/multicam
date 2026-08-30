@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -243,6 +244,31 @@ class UploadService:
                 if path.is_file() and path.resolve().is_relative_to(self.root):
                     return path
         raise UploadNotFoundError(capture_id)
+
+    def delete_capture(self, session_id: UUID, device_id: UUID, capture_id: UUID) -> bool:
+        uploads_dir = self._device_dir(session_id, device_id) / ".uploads"
+        matched: list[tuple[Path, dict]] = []
+        for metadata_path in uploads_dir.glob("*/upload.json"):
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if metadata.get("capture_id", metadata.get("upload_id")) == str(capture_id):
+                matched.append((metadata_path.parent, metadata))
+        if not matched:
+            return False
+        root = self.root.resolve()
+        for upload_dir, metadata in matched:
+            receipt_path = metadata.get("receipt", {}).get("file_path")
+            if receipt_path:
+                artifact = (self.root / receipt_path).resolve()
+                if artifact.is_relative_to(root):
+                    artifact.unlink(missing_ok=True)
+            resolved_upload = upload_dir.resolve()
+            if resolved_upload.is_relative_to(root) and resolved_upload.parent == uploads_dir.resolve():
+                shutil.rmtree(resolved_upload)
+        return True
+
+    def delete_take(self, session: Session, take_id: UUID) -> int:
+        captures = [media for media in self.list_media(session) if (media.take_id or media.capture_id) == take_id]
+        return sum(self.delete_capture(session.session_id, media.device_id, media.capture_id) for media in captures)
 
     def build_report(self, session: Session) -> dict:
         expected_devices = {
