@@ -19,6 +19,8 @@ input, output { width: 100%; padding: 13px 14px; color: #f6f8fc; border: 1px sol
 .status, .dot { padding: 6px 10px; color: #86efac; border-radius: 999px; background: #14532d55; font-size: .75rem; font-weight: 800; }
 .dot.offline { color: #fca5a5; background: #7f1d1d55; }
 .device { padding: 15px 0; border-top: 1px solid #283750; }
+.preview-toggle { width: 100%; margin-bottom: 14px; }
+.live-preview { width: min(180px, 35%); aspect-ratio: 16 / 9; border: 1px solid #405170; border-radius: 10px; background: #030712; object-fit: cover; }
 .device div, .ready div { display: grid; gap: 4px; }
 small, .muted { color: #8391a7; overflow-wrap: anywhere; }
 .ready { justify-content: flex-start; margin-top: 30px; padding: 20px; border-radius: 14px; background: #14532d44; }

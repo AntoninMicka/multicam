@@ -69,6 +69,8 @@ const activeCommandId = ref('')
 const activeCommandType = ref('')
 const operationalWarnings = ref<string[]>([])
 const clockMetrics = ref<Record<string, { offset_ms: number; rtt_ms: number }>>({})
+const livePreviewEnabled = ref(false)
+const previewFrames = ref<Record<string, { data_url: string; captured_at: string }>>({})
 let socket: WebSocket | null = null
 let commandTimeout: number | undefined
 let clockTimer: number | undefined
@@ -87,6 +89,7 @@ let pendingTelemetryWrites: Promise<void>[] = []
 let recordingStartedAt: number | null = null
 let telemetryTimer: number | undefined
 let geolocationWatchId: number | undefined
+let previewTimer: number | undefined
 
 interface PositionSample {
   latitude: number
@@ -246,6 +249,13 @@ function connectSocket(id: string, cameraId?: string) {
     if (message.type === 'clock.report' && role.value === 'director') {
       clockMetrics.value[message.payload.device_id] = { offset_ms: message.payload.offset_ms, rtt_ms: message.payload.rtt_ms }
     }
+    if (message.type === 'preview.control') livePreviewEnabled.value = !!message.payload.enabled
+    if (message.type === 'preview.frame' && role.value === 'director') {
+      previewFrames.value[message.payload.device_id] = {
+        data_url: message.payload.data_url,
+        captured_at: message.payload.captured_at,
+      }
+    }
     if (message.type === 'upload.progress') {
       const { device_id, received_chunks, total_chunks } = message.payload
       if (!deviceUploadStatus.value[device_id]) {
@@ -308,6 +318,11 @@ async function selectSession(selected: Session) {
 }
 
 async function backToSessions() {
+  if (livePreviewEnabled.value && socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'preview.control', payload: { enabled: false } }))
+  }
+  livePreviewEnabled.value = false
+  previewFrames.value = {}
   socket?.close()
   socket = null
   session.value = null
@@ -445,9 +460,40 @@ async function prepareCamera() {
       if (recording.value) error.value = 'Během záznamu došlo ke ztrátě kamery nebo mikrofonu.'
     }))
     cameraReady.value = true
+    window.clearInterval(previewTimer)
+    previewTimer = window.setInterval(sendPreviewFrame, 1000)
   } catch {
     error.value = 'Kamera nebo mikrofon nejsou dostupné. Zkontrolujte oprávnění a HTTPS.'
   }
+}
+
+function toggleLivePreview(): void {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    error.value = 'Řídicí kanál není připojený.'
+    return
+  }
+  const enabled = !livePreviewEnabled.value
+  livePreviewEnabled.value = enabled
+  if (!enabled) previewFrames.value = {}
+  socket.send(JSON.stringify({ type: 'preview.control', payload: { enabled } }))
+}
+
+function sendPreviewFrame(): void {
+  if (!livePreviewEnabled.value || recording.value || document.visibilityState !== 'visible' || !preview.value || !socket || socket.readyState !== WebSocket.OPEN) return
+  const source = preview.value
+  if (source.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !source.videoWidth) return
+  const width = Math.min(320, source.videoWidth)
+  const height = Math.round(width * source.videoHeight / source.videoWidth)
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  if (!context) return
+  context.drawImage(source, 0, 0, width, height)
+  socket.send(JSON.stringify({
+    type: 'preview.frame',
+    payload: { data_url: canvas.toDataURL('image/jpeg', 0.45), captured_at: new Date().toISOString(), width, height },
+  }))
 }
 
 async function acquireWakeLock(): Promise<void> {
@@ -780,6 +826,7 @@ onBeforeUnmount(() => {
   if (videoTrack) void videoTrack.applyConstraints({ advanced: [{ torch: false } as MediaTrackConstraintSet] }).catch(() => undefined)
   window.clearInterval(telemetryTimer)
   window.clearInterval(clockTimer)
+  window.clearInterval(previewTimer)
   window.clearTimeout(commandTimeout)
   uploadRetryTimers.forEach((timer) => window.clearTimeout(timer))
   document.removeEventListener('visibilitychange', handleVisibilityChange)
@@ -836,6 +883,7 @@ onBeforeUnmount(() => {
         <button class="archive-button secondary" @click="archiveOpen = true">Archiv všech záznamů</button>
         <HotspotPanel />
         <h3>Zařízení ({{ devices.length }})</h3>
+        <button class="preview-toggle secondary" :disabled="!connectedDevices.length || session.state === 'recording'" @click="toggleLivePreview">{{ livePreviewEnabled ? 'Vypnout živé náhledy' : 'Zapnout živé náhledy' }}</button>
         <div class="record-controls">
           <template v-if="session.state !== 'recording'">
             <button class="secondary" :disabled="!connectedDevices.length" @click="sendRecordingCommand('control.arm')">1. ARM · připravit kamery</button>
@@ -847,7 +895,8 @@ onBeforeUnmount(() => {
         <button class="clap-button" :disabled="!devices.some(device => device.role === 'main_camera' && device.connected)" @click="triggerClap">Spustit identifikační klapku</button>
         <p v-if="!devices.length" class="muted">Čekám na připojení prvního telefonu…</p>
         <article v-for="device in devices" :key="device.device_id" class="device">
-          <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small><small v-if="clockMetrics[device.device_id]">Hodiny: offset {{ clockMetrics[device.device_id].offset_ms.toFixed(1) }} ms · RTT {{ clockMetrics[device.device_id].rtt_ms.toFixed(1) }} ms</small><small v-if="deviceUploadStatus[device.device_id]">Přenos: {{ formatSpeed(deviceUploadStatus[device.device_id].speed_bps) }} · zbývá {{ formatEta(deviceUploadStatus[device.device_id].eta_seconds) }} · opakování {{ deviceUploadStatus[device.device_id].retries }}</small><small v-if="deviceUploadStatus[device.device_id]?.error" class="ack-error">{{ deviceUploadStatus[device.device_id].error }}</small><small v-if="controlAcks[device.device_id]" :class="{ 'ack-error': ['error', 'timeout'].includes(controlAcks[device.device_id].status) }">{{ ackLabel(controlAcks[device.device_id]) }}</small></div>
+          <img v-if="previewFrames[device.device_id]" class="live-preview" :src="previewFrames[device.device_id].data_url" :alt="`Živý náhled ${device.name}`" />
+          <div><strong>{{ device.name }} · {{ roleLabel(device.role) }}</strong><small v-if="previewFrames[device.device_id]">Náhled {{ new Date(previewFrames[device.device_id].captured_at).toLocaleTimeString() }}</small><small>Baterie: {{ device.capabilities.battery_percent ?? 'neznámá' }} % · Volno: {{ formatBytes(device.capabilities.free_storage_bytes) }}</small><small>Kamera: {{ permissionLabel(device.capabilities.camera_permission) }} · Mikrofon: {{ permissionLabel(device.capabilities.microphone_permission) }}</small><small v-if="clockMetrics[device.device_id]">Hodiny: offset {{ clockMetrics[device.device_id].offset_ms.toFixed(1) }} ms · RTT {{ clockMetrics[device.device_id].rtt_ms.toFixed(1) }} ms</small><small v-if="deviceUploadStatus[device.device_id]">Přenos: {{ formatSpeed(deviceUploadStatus[device.device_id].speed_bps) }} · zbývá {{ formatEta(deviceUploadStatus[device.device_id].eta_seconds) }} · opakování {{ deviceUploadStatus[device.device_id].retries }}</small><small v-if="deviceUploadStatus[device.device_id]?.error" class="ack-error">{{ deviceUploadStatus[device.device_id].error }}</small><small v-if="controlAcks[device.device_id]" :class="{ 'ack-error': ['error', 'timeout'].includes(controlAcks[device.device_id].status) }">{{ ackLabel(controlAcks[device.device_id]) }}</small></div>
           <span :class="['dot', { offline: !device.connected || deviceUploadStatus[device.device_id]?.status === 'retrying' }]">{{ !device.connected ? 'odpojeno' : deviceUploadStatus[device.device_id] ? `${deviceUploadStatus[device.device_id].status === 'retrying' ? 'čeká na retry' : deviceUploadStatus[device.device_id].status === 'verified' ? 'ověřeno' : 'přenos'} ${deviceUploadStatus[device.device_id].percent} %` : device.state }}</span>
         </article>
         <div class="media-heading"><h3>Záznamy ({{ sessionMedia.length }})</h3><div class="heading-actions"><button class="small secondary" :disabled="analyzingClaps || !sessionMedia.length" @click="analyzeClaps">{{ analyzingClaps ? 'Analyzuji…' : 'Najít klapky' }}</button><button class="small secondary" @click="downloadSessionReport">Stáhnout report</button><button class="small" @click="loadSessionMedia">Obnovit</button></div></div>

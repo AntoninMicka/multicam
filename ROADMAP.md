@@ -22,6 +22,7 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 - [x] Zavést `session_id`, `device_id`, stavový automat (`disconnected`, `ready`, `recording`, `stored`, `uploading`, `verified`).
 - [x] V režisérském UI zobrazit připojená zařízení, baterii, místo, oprávnění a připravenost.
 - [x] Definovat verzované JSON schéma manifestu relace a telemetrie.
+- [x] Zobrazit na režisérském pultu zapínatelné nízkoobjemové živé náhledy kamer pro sestavení scény; během záznamu přenos náhledů pozastavit.
 
 **Hotovo, když:** režisér vidí všechny telefony a jejich stav a dokáže založit relaci bez nahrávání.
 

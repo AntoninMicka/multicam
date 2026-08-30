@@ -97,6 +97,8 @@ Režisérský pult i kamerový klient jsou součástí stejné PWA na `http://lo
 
 V sandboxovém režimu existuje vždy jedna aktuální relace, kterou klienti vyhledají automaticky. Není proto nutné opisovat její ID. Zařízení si při připojení zvolí roli hlavní, top-over nebo vedlejší kamery; vedlejších kamer může být libovolný počet. Režisér může hlavní kameře přes WebSocket poslat povel k celoobrazovkové světelné klapce; stejnou klapku lze na hlavní kameře otestovat lokálně.
 
+Pro sestavení scény může režisér zapnout živé náhledy všech připojených kamer. Kamery posílají přes řídicí WebSocket jeden JPEG snímek za sekundu, maximálně 320 px široký a s úspornou kvalitou. Náhledy se během ostrého záznamu automaticky pozastaví a lze je z pultu zcela vypnout.
+
 Spuštění a zastavení záznamu lze ovládat z režisérského pultu i z hlavní kamery. Povel se přenese na všechny připojené kamery. Po zastavení klient vypočítá SHA-256 a automaticky odešle záznam ve 4MB blocích. Server podporuje opakované bloky a navázání podle již přijatých částí, výsledný soubor skládá atomicky a označí zařízení jako `verified` až po kontrole velikosti a SHA-256. Data se ukládají do `data/sessions/`; umístění lze změnit proměnnou `MULTICAM_DATA_DIR`.
 
 Ke každému videu klient vytváří párovaný telemetrický soubor JSON Lines s monotónními a UTC časy startu, stopu, pravidelných vzorků hodin a přijetí synchronizační klapky. Každý vzorek obsahuje také poslední GNSS pozici, orientaci zařízení a skutečné nastavení zoomu kamerového tracku. Webová API neposkytují spolehlivě fyzický úhel záběru, proto je `field_of_view_deg` bez kalibrace telefonu explicitně `null`; `zoom_ratio`, rozlišení a ostatní dostupné hodnoty se ukládají přímo. Zařízení přejde do stavu `verified` až po ověření videa i telemetrie.
