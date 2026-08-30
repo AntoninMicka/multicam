@@ -115,11 +115,17 @@ Samostatný archiv režisérského pultu zobrazuje všechny záznamy napříč r
 
 ## Aktuální stav
 
+Projekt je uzavřený jako funkční MVP pro zamýšlené lokální použití.
 Relace a zařízení se ukládají do manifestů na disku a po restartu serveru se znovu načtou.
 Záznam, telemetrie, obnovitelný chunkovaný upload, kontrola integrity, historie relací,
 lokální HTTPS a izolovaný hotspot jsou implementované. Nedokončené oblasti a pořadí
 dalších prací jsou vedené v [roadmapě](ROADMAP.md), zejména potvrzování řídicích povelů,
 měření časového offsetu, odolnost mobilního záznamu a terénní integrační testy.
+
+Před připojením kamery lze zvolit profil **Kompatibilní** (640×480/24),
+**Vyvážený** (1280×720/30, doporučený) nebo **Kvalitní** (1920×1080/30).
+Prohlížeč z nabídky profilu vybere podporovaný WebM/MP4 kodek a aplikace následně
+zobrazí a uloží skutečně dosažené rozlišení, FPS a MIME typ.
 
 ## Definice úspěchu MVP
 

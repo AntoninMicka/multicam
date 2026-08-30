@@ -1,5 +1,8 @@
 # Roadmapa
 
+> **Stav projektu:** funkční MVP uzavřeno pro zamýšlené použití. Nezaškrtnuté body
+> zůstávají jako volitelné náměty pro případné budoucí terénní zpevnění.
+
 Stavy: `[x]` implementováno, `[~]` implementováno
 částečně nebo čeká na ověření na cílových zařízeních, `[ ]` dosud není hotovo.
 
@@ -8,7 +11,7 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 - [ ] Sepsat cílové telefony, OS, prohlížeče, rozlišení, kodeky a volné místo.
 - [ ] Ověřit `getUserMedia`, `MediaRecorder`, IndexedDB, GPS a `DeviceOrientation` na každém telefonu.
 - [ ] Ověřit oprávnění senzorů, zejména explicitní souhlas na iOS.
-- [ ] Zvolit podporovaný profil videa podle nejslabšího telefonu; nezačínat automaticky ve 4K.
+- [x] Nabídnout omezené profily podle výkonu zařízení: kompatibilní 640×480/24, doporučený 720p/30 a kvalitní 1080p/30; skutečně dosažené parametry vždy uložit.
 - [~] Připravit lokální HTTPS (generování CA a serverového certifikátu je hotové; zbývá ověřit instalaci a důvěru na všech cílových telefonech).
 - [ ] Změřit dostupné místo a odhadnout velikost jedné relace s bezpečnostní rezervou.
 
@@ -28,7 +31,7 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 
 ## 2. Lokální záznam videa a telemetrie
 
-- [~] Inicializovat kameru a nabídnout pouze ověřené kombinace rozlišení/FPS/kodeku (kamera se inicializuje a MIME se vybírá podle podpory prohlížeče, chybí uživatelská volba a matice ověřených profilů).
+- [x] Inicializovat kameru podle zvoleného omezeného profilu, vybrat první prohlížečem podporovaný kodek a zobrazit i uložit skutečné rozlišení a FPS.
 - [x] Nahrávat přes `MediaRecorder` po kratších blocích, ne jako jediný obří Blob v RAM.
 - [x] Průběžně ukládat bloky do IndexedDB a obnovit stav po reloadu nebo pádu PWA.
 - [x] Zaznamenávat monotónní čas a jen metadata nezbytná pro synchronizaci záznamu.

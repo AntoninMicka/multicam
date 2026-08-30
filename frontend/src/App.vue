@@ -30,12 +30,20 @@ import {
 import type { Session } from './types'
 
 type Role = 'director' | 'main_camera' | 'top_camera' | 'secondary_camera'
+type VideoProfileId = 'compatible' | 'balanced' | 'quality'
+const VIDEO_PROFILES: Record<VideoProfileId, { label: string; description: string; width: number; height: number; fps: number; mimeTypes: string[] }> = {
+  compatible: { label: 'Kompatibilní', description: '640×480 · 24 FPS · nejnižší zátěž', width: 640, height: 480, fps: 24, mimeTypes: ['video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'] },
+  balanced: { label: 'Vyvážený', description: '1280×720 · 30 FPS · doporučeno', width: 1280, height: 720, fps: 30, mimeTypes: ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4'] },
+  quality: { label: 'Kvalitní', description: '1920×1080 · 30 FPS · vyšší nároky', width: 1920, height: 1080, fps: 30, mimeTypes: ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'] },
+}
 const role = ref<Role | null>(null)
 const archiveOpen = ref(false)
 const session = ref<Session | null>(null)
 const sessionName = ref('Zkušební relace')
 const deviceName = ref(`Telefon ${Math.floor(Math.random() * 90 + 10)}`)
 const deviceId = ref(localStorage.getItem('multicam.deviceId') ?? '')
+const selectedVideoProfile = ref<VideoProfileId>((localStorage.getItem('multicam.videoProfile') as VideoProfileId) in VIDEO_PROFILES ? localStorage.getItem('multicam.videoProfile') as VideoProfileId : 'balanced')
+const activeVideoSettings = ref('')
 const error = ref('')
 const busy = ref(false)
 const flashVisible = ref(false)
@@ -390,6 +398,7 @@ async function joinCamera() {
   busy.value = true
   error.value = ''
   try {
+    localStorage.setItem('multicam.videoProfile', selectedVideoProfile.value)
     await prepareSensors()
     await navigator.storage?.persist?.().catch(() => false)
     const activeSession = await getCurrentSession()
@@ -448,8 +457,14 @@ function sendRecordingCommand(type: 'control.arm' | 'recording.start' | 'recordi
 
 async function prepareCamera() {
   try {
+    const profile = VIDEO_PROFILES[selectedVideoProfile.value]
     mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' } },
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: profile.width, max: profile.width },
+        height: { ideal: profile.height, max: profile.height },
+        frameRate: { ideal: profile.fps, max: profile.fps },
+      },
       audio: true,
     })
     if (preview.value) preview.value.srcObject = mediaStream
@@ -460,6 +475,8 @@ async function prepareCamera() {
       if (recording.value) error.value = 'Během záznamu došlo ke ztrátě kamery nebo mikrofonu.'
     }))
     cameraReady.value = true
+    const settings = mediaStream.getVideoTracks()[0]?.getSettings()
+    activeVideoSettings.value = `${settings?.width ?? '?'}×${settings?.height ?? '?'} · ${settings?.frameRate?.toFixed(1) ?? '?'} FPS`
     window.clearInterval(previewTimer)
     previewTimer = window.setInterval(sendPreviewFrame, 1000)
   } catch {
@@ -598,7 +615,7 @@ async function startLocalRecording(requestDetails: Record<string, unknown> = {})
   recordingStarting.value = true
   try {
     const cameraRole = role.value as Exclude<Role, 'director'>
-    const preferredTypes = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
+    const preferredTypes = VIDEO_PROFILES[selectedVideoProfile.value].mimeTypes
     const mimeType = preferredTypes.find((type) => MediaRecorder.isTypeSupported(type))
     captureId = crypto.randomUUID()
     const currentCaptureId = captureId
@@ -630,6 +647,7 @@ async function startLocalRecording(requestDetails: Record<string, unknown> = {})
         zoom_ratio: settings?.zoom ?? null,
         mime_type: mediaRecorder.mimeType,
         app_version: '0.1.0',
+        video_profile: selectedVideoProfile.value,
       },
     }
     await createLocalCapture(localCapture)
@@ -866,6 +884,11 @@ onBeforeUnmount(() => {
       <template v-else>
         <h2>Připojit: {{ roleLabel(role) }}</h2>
         <label>Název zařízení <input v-model.trim="deviceName" /></label>
+        <label>Profil záznamu
+          <select v-model="selectedVideoProfile">
+            <option v-for="(profile, id) in VIDEO_PROFILES" :key="id" :value="id">{{ profile.label }} — {{ profile.description }}</option>
+          </select>
+        </label>
         <p class="muted">Aplikace automaticky použije právě aktivní relaci.</p>
         <div v-if="localCaptures.length" class="recovery-notice">
           <strong>Nalezené lokální záznamy: {{ localCaptures.length }}</strong>
@@ -911,7 +934,7 @@ onBeforeUnmount(() => {
       <template v-else>
         <div v-if="operationalWarnings.length" class="warning-list"><strong>Upozornění</strong><small v-for="warning in operationalWarnings" :key="warning">{{ warning }}</small></div>
         <video ref="preview" class="preview" autoplay muted playsinline></video>
-        <div class="ready"><span>✓</span><div><strong>Zařízení je připravené</strong><small>{{ deviceName }}</small></div></div>
+        <div class="ready"><span>✓</span><div><strong>Zařízení je připravené</strong><small>{{ deviceName }} · {{ VIDEO_PROFILES[selectedVideoProfile].label }}</small><small>{{ activeVideoSettings }}</small></div></div>
         <div v-if="role === 'main_camera'" class="record-controls">
           <template v-if="session.state !== 'recording'">
             <button v-if="session.state !== 'armed'" class="secondary" :disabled="!cameraReady" @click="sendRecordingCommand('control.arm')">1. ARM · připravit kamery</button>
