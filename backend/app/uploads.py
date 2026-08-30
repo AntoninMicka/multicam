@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -246,6 +247,25 @@ class UploadService:
                     return path
         raise UploadNotFoundError(capture_id)
 
+    def playback_path(self, session_id: UUID, device_id: UUID, capture_id: UUID) -> Path:
+        source = self.artifact_path(session_id, device_id, capture_id, "recording")
+        if source.suffix.lower() != ".webm":
+            return source
+        playback = source.with_name(f"{source.stem}.playback.webm")
+        if playback.is_file() and playback.stat().st_size > 0 and playback.stat().st_mtime >= source.stat().st_mtime:
+            return playback
+        temporary = playback.with_suffix(".webm.part")
+        temporary.unlink(missing_ok=True)
+        result = subprocess.run([
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-fflags", "+genpts",
+            "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-f", "webm", str(temporary),
+        ], capture_output=True, text=True, timeout=120, check=False)
+        if result.returncode != 0 or not temporary.is_file() or temporary.stat().st_size == 0:
+            temporary.unlink(missing_ok=True)
+            return source
+        os.replace(temporary, playback)
+        return playback
+
     def delete_capture(self, session_id: UUID, device_id: UUID, capture_id: UUID) -> bool:
         uploads_dir = self._device_dir(session_id, device_id) / ".uploads"
         matched: list[tuple[Path, dict]] = []
@@ -262,6 +282,8 @@ class UploadService:
                 artifact = (self.root / receipt_path).resolve()
                 if artifact.is_relative_to(root):
                     artifact.unlink(missing_ok=True)
+                    if artifact.suffix.lower() == ".webm":
+                        artifact.with_name(f"{artifact.stem}.playback.webm").unlink(missing_ok=True)
             resolved_upload = upload_dir.resolve()
             if resolved_upload.is_relative_to(root) and resolved_upload.parent == uploads_dir.resolve():
                 shutil.rmtree(resolved_upload)

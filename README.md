@@ -10,6 +10,7 @@ Spolehlivě pořídit z několika telefonů jednu společnou relaci obsahující
 
 - mobilní PWA: Vue 3 + Vite + TypeScript + `vite-plugin-pwa`
 - lokální server: Python + FastAPI + WebSocket
+- serverový nástroj: FFmpeg pro bezztrátové doplnění WebM indexu pro přehrávání
 - lokální úložiště telefonu: IndexedDB
 - desktopový režisérský pult: nejprve webové UI, později volitelně Qt
 

@@ -23,6 +23,10 @@ command -v npm >/dev/null 2>&1 || {
   printf 'Chyba: npm nebylo nalezeno. Nainstalujte Node.js a npm.\n' >&2
   exit 1
 }
+command -v ffmpeg >/dev/null 2>&1 || {
+  printf 'Chyba: ffmpeg nebyl nalezen. Je potřeba pro kompatibilní přehrávací kopie WebM.\n' >&2
+  exit 1
+}
 
 if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
   log "Vytvářím Python virtualenv…"

@@ -199,7 +199,7 @@ async def analyze_session_claps(session_id: UUID) -> dict:
 @app.get("/api/media/{session_id}/{device_id}/{capture_id}/video", response_class=FileResponse)
 async def get_recording_media(session_id: UUID, device_id: UUID, capture_id: UUID) -> FileResponse:
     try:
-        path = uploads.artifact_path(session_id, device_id, capture_id, "recording")
+        path = await asyncio.to_thread(uploads.playback_path, session_id, device_id, capture_id)
     except UploadNotFoundError as error:
         raise HTTPException(status_code=404, detail="Recording not found") from error
     return FileResponse(path)
