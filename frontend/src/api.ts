@@ -74,6 +74,19 @@ export interface TelemetrySample {
   orientation?: { alpha_deg: number | null; beta_deg: number | null; gamma_deg: number | null } | null
 }
 
+export interface HotspotStatus {
+  active: boolean
+  ssid?: string
+  password?: string
+  address?: string
+  app_url?: string
+  interface?: string
+}
+
+export function getHotspotStatus(): Promise<HotspotStatus> {
+  return fetch('/api/hotspot').then(json<HotspotStatus>)
+}
+
 export function registerDevice(
   sessionId: string,
   name: string,

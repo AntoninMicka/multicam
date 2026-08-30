@@ -13,6 +13,7 @@ import {
   type DeviceCapabilities,
 } from './api'
 import CapturePlayer from './CapturePlayer.vue'
+import HotspotPanel from './HotspotPanel.vue'
 import {
   appendRecordingChunk,
   appendTelemetryEvent,
@@ -526,6 +527,7 @@ onBeforeUnmount(() => {
     <section v-else-if="!session" class="card">
       <button class="back" @click="role = null">← změnit roli</button>
       <template v-if="role === 'director'">
+        <HotspotPanel />
         <div v-if="availableSessions.length" class="session-list">
           <h2>Relace</h2>
           <button v-for="item in availableSessions" :key="item.session_id" class="session-item" @click="selectSession(item)">
@@ -553,6 +555,7 @@ onBeforeUnmount(() => {
 
       <template v-if="role === 'director'">
         <button class="back" @click="backToSessions">← seznam relací</button>
+        <HotspotPanel />
         <h3>Zařízení ({{ devices.length }})</h3>
         <div class="record-controls">
           <button v-if="session.state !== 'recording'" :disabled="!devices.some(device => device.connected)" @click="sendRecordingCommand('recording.start')">● Spustit záznam</button>

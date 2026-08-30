@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -39,6 +40,15 @@ app.add_middleware(
 @app.get("/api/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/hotspot")
+async def hotspot_status() -> dict:
+    status_path = Path(os.environ.get("MULTICAM_HOTSPOT_STATUS", "/run/multicam/hotspot.json"))
+    try:
+        return json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"active": False}
 
 
 @app.post("/api/sessions", response_model=Session, status_code=status.HTTP_201_CREATED)
