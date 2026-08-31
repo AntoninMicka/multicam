@@ -72,6 +72,31 @@ export function analyzeSessionClaps(sessionId: string): Promise<{ captures: Reco
   return fetch(`/api/sessions/${sessionId}/analyze-claps`, { method: 'POST' }).then(json<{ captures: Record<string, { status: string }> }>)
 }
 
+export interface VisionJob {
+  job_id: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  status_url?: string
+  error?: string
+  result_file?: string
+}
+
+export function startTopdownAnalysis(
+  sessionId: string,
+  takeId: string,
+  backend: 'prepare' | 'ollama' | 'comfyui',
+  model?: string,
+): Promise<VisionJob> {
+  return fetch(`/api/sessions/${sessionId}/takes/${takeId}/topdown-analysis`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backend, model: model || null }),
+  }).then(json<VisionJob>)
+}
+
+export function getVisionJob(url: string): Promise<VisionJob> {
+  return fetch(url).then(json<VisionJob>)
+}
+
 export function deleteServerCapture(sessionId: string, deviceId: string, captureId: string): Promise<{ deleted: boolean }> {
   return fetch(`/api/media/${sessionId}/${deviceId}/${captureId}`, { method: 'DELETE' }).then(json<{ deleted: boolean }>)
 }

@@ -138,6 +138,29 @@ balík pro něj zůstává adresářovou sadou videí a JSON. Ollama může nad
 vybranými snímky a strukturovanými výsledky dělat klasifikaci, popis a kontrolu,
 ale nemá nahrazovat dekódování PTS, kalibraci ani numerický tracking.
 
+### Lokální vision analýza top-over
+
+Tlačítko **Analyzovat top-down** u klapky založí asynchronní job. Režim
+`prepare` pouze vyextrahuje časované JPEG vzorky; `ollama` je odešle do lokálního
+vision modelu se strukturovaným JSON schématem; `comfyui` je nahraje a spustí
+nad každým snímkem nakonfigurovaný API workflow. Výsledky, úplné odpovědi a
+provenance se ukládají do
+`analysis/<take_id>/vision/<job_id>/`.
+
+```bash
+MULTICAM_OLLAMA_URL=http://127.0.0.1:11434 \
+MULTICAM_OLLAMA_MODEL=gemma3:12b ./run.sh
+
+MULTICAM_COMFY_URL=http://127.0.0.1:8188 \
+MULTICAM_COMFY_WORKFLOW=/absolutni/cesta/workflow-api.json ./run.sh
+```
+
+ComfyUI workflow musí být exportovaný v API formátu a na místě názvu vstupního
+souboru obsahovat přesný řetězec `{{INPUT_IMAGE}}`. Job čeká na dokončení promptu
+a uloží také vrácenou historii uzlů. Ve výchozím nastavení jsou z bezpečnostních
+důvodů povolené jen loopback HTTP adresy. Pro samostatný stroj v důvěryhodné
+lokální síti lze explicitně nastavit `MULTICAM_ALLOW_REMOTE_ANALYSIS=1`.
+
 Každý blok z `MediaRecorder` a každá telemetrická událost se průběžně ukládají do IndexedDB. Po reloadu aplikace zobrazí dokončené i přerušené lokální záznamy a dovolí jejich upload zopakovat. Kamerový pohled prohledává celý lokální archiv prohlížeče, nikoli pouze záznamy současného `device_id`, takže najde také data ze starší relace, role nebo registrace zařízení. Ověřenou lokální kopii lze smazat pouze samostatným tlačítkem a po výslovném potvrzení uživatele.
 
 REST API dokumentace je za běhu dostupná na `https://localhost:8000/docs`. Manifest relace a časové události mají verzovaná schémata v adresáři [`schemas`](schemas).

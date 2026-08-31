@@ -111,8 +111,8 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 - [ ] Georeferencovat `scene_m` přes lokální ENU transformaci a reportovat prostorová rezidua i časovou interpolaci.
 - [ ] Přidat vizualizační overlay a validační test proti ručně změřenému ground truth.
 - [x] Přidat přenositelný `.multicam.zip` export/import s manifestem, ZIP64 a kontrolou SHA-256.
-- [ ] Přidat ComfyUI workflow pro top-down detekci a import výsledného JSON.
-- [ ] Přidat volitelný Ollama krok pro klasifikaci/popisy a kontrolu výsledků.
+- [~] Přidat ComfyUI workflow pro top-down detekci a import výsledného JSON (odeslání API workflow, čekání na historii a provenance jsou hotové; chybí konkrétní workflow a normalizace jeho výstupu).
+- [~] Přidat volitelný Ollama krok pro klasifikaci/popisy a kontrolu výsledků (lokální vision API a strukturované odpovědi jsou hotové; zbývá ověřit vybraný model).
 
 **Hotovo, když:** záznam top kamery vytvoří validní
 `topdown-analysis.json`, jehož body mají ověřenou časovou a prostorovou chybu.

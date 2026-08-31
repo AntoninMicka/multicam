@@ -29,9 +29,11 @@ from .mosaic import MosaicError, render_mosaic
 from .store import SessionNotFoundError, store
 from .uploads import UploadConflictError, UploadNotFoundError, uploads
 from .websocket import connections
+from .vision import VisionRequest, run_vision_job
 
 app = FastAPI(title="MultiCam control server", version="0.1.0")
 active_clap_sequences: set[UUID] = set()
+analysis_tasks: set[asyncio.Task] = set()
 
 
 def clap_sequence_steps(session: Session) -> list[tuple[str, Device | None]]:
@@ -272,6 +274,48 @@ async def get_take_mosaic(session_id: UUID, take_id: UUID) -> FileResponse:
     except MosaicError as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
     return FileResponse(destination, media_type="video/mp4", filename=f"take-{take_id}-mosaic.mp4")
+
+
+@app.post("/api/sessions/{session_id}/takes/{take_id}/topdown-analysis", status_code=status.HTTP_202_ACCEPTED)
+async def start_topdown_analysis(session_id: UUID, take_id: UUID, request: VisionRequest) -> dict:
+    try:
+        session = await store.get(session_id)
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Session not found") from error
+    captures = [media for media in uploads.list_media(session) if (media.take_id or media.capture_id) == take_id]
+    top = next((media for media in captures if media.role == DeviceRole.TOP_CAMERA), None)
+    if top is None:
+        raise HTTPException(status_code=409, detail="This take has no top-over recording")
+    try:
+        video = uploads.artifact_path(session_id, top.device_id, top.capture_id, "recording")
+    except UploadNotFoundError as error:
+        raise HTTPException(status_code=409, detail="Top-over recording is missing") from error
+    job_id = uuid4()
+    job_dir = uploads.root / str(session_id) / "analysis" / str(take_id) / "vision" / str(job_id)
+    metadata = {
+        "schema_version": "1.0", "job_id": str(job_id), "session_id": str(session_id),
+        "take_id": str(take_id), "capture_id": str(top.capture_id), "device_id": str(top.device_id),
+    }
+    job_dir.mkdir(parents=True, exist_ok=True)
+    (job_dir / "job.json").write_text(json.dumps({
+        **metadata, "status": "queued", "created_at": datetime.now(timezone.utc).isoformat(),
+        "request": request.model_dump(),
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    task = asyncio.create_task(asyncio.to_thread(run_vision_job, video, job_dir, request, metadata))
+    analysis_tasks.add(task)
+    task.add_done_callback(analysis_tasks.discard)
+    return {**metadata, "status": "queued", "status_url": f"/api/analysis-jobs/{job_id}"}
+
+
+@app.get("/api/analysis-jobs/{job_id}")
+async def get_analysis_job(job_id: UUID) -> dict:
+    matches = list(uploads.root.glob(f"*/analysis/*/vision/{job_id}/job.json"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="Analysis job not found")
+    try:
+        return json.loads(matches[0].read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=500, detail="Analysis job state is invalid") from error
 
 
 @app.post("/api/sessions/{session_id}/analyze-claps")

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue'
-import type { CaptureMedia } from './api'
+import { getVisionJob, startTopdownAnalysis, type CaptureMedia } from './api'
 import CapturePlayer from './CapturePlayer.vue'
 
 const props = defineProps<{ captures: CaptureMedia[]; sessionId?: string }>()
 const players = ref<Array<InstanceType<typeof CapturePlayer>>>([])
 const playing = ref(false)
 const playbackError = ref('')
+const analysisMessage = ref('')
 let syncTimer: number | undefined
 
 function setPlayer(player: unknown, index: number): void {
@@ -56,6 +57,28 @@ function downloadMosaic(): void {
   const takeId = props.captures[0]?.take_id ?? props.captures[0]?.capture_id
   if (props.sessionId && takeId) window.location.assign(`/api/sessions/${props.sessionId}/takes/${takeId}/mosaic`)
 }
+
+async function analyzeTopdown(): Promise<void> {
+  const takeId = props.captures[0]?.take_id ?? props.captures[0]?.capture_id
+  if (!props.sessionId || !takeId) return
+  const selected = window.prompt('Backend analýzy: prepare, ollama nebo comfyui', 'prepare')?.trim().toLowerCase()
+  if (!selected || !['prepare', 'ollama', 'comfyui'].includes(selected)) return
+  const backend = selected as 'prepare' | 'ollama' | 'comfyui'
+  const model = backend === 'ollama' ? window.prompt('Název lokálního Ollama vision modelu', '')?.trim() : undefined
+  analysisMessage.value = 'Analýza se připravuje…'
+  try {
+    let job = await startTopdownAnalysis(props.sessionId, takeId, backend, model)
+    if (!job.status_url) return
+    const statusUrl = job.status_url
+    while (['queued', 'running'].includes(job.status)) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+      job = await getVisionJob(statusUrl)
+    }
+    analysisMessage.value = job.status === 'completed' ? 'Top-down analýza dokončena.' : `Analýza selhala: ${job.error ?? 'neznámá chyba'}`
+  } catch (reason) {
+    analysisMessage.value = reason instanceof Error ? reason.message : 'Analýzu nelze spustit.'
+  }
+}
 </script>
 
 <template>
@@ -68,9 +91,11 @@ function downloadMosaic(): void {
       <div class="group-actions">
         <button v-if="sessionId" class="small secondary" @click="downloadTake">Stáhnout klapku</button>
         <button v-if="sessionId" class="small secondary" @click="downloadMosaic">Stáhnout matici MP4</button>
+        <button v-if="sessionId && captures.some(capture => capture.role === 'top_camera')" class="small secondary" @click="analyzeTopdown">Analyzovat top-down</button>
         <button class="small" @click="togglePlayback">{{ playing ? '❚❚ Pozastavit vše' : '▶ Přehrát vše' }}</button>
       </div>
     </header>
+    <p v-if="analysisMessage" class="muted">{{ analysisMessage }}</p>
     <p v-if="playbackError" class="error">{{ playbackError }}</p>
     <div class="stream-matrix">
       <CapturePlayer
