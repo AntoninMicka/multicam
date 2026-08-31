@@ -47,7 +47,7 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 - [x] Měřit offset a round-trip time hodin mezi telefony a serverem opakovaným handshake; hodnoty zobrazovat na pultu a ukládat do telemetrie záznamu.
 - [~] Ukládat plánovaný i skutečný lokální čas startu/stopu (ukládá se čas přijetí povelu, lokální monotónní i UTC čas; chybí plánovaný start a síťová korekce).
 - [~] Použít dobře viditelný záblesk nebo LED panel jako obrazovou klapku (automatická klapka po 2 s, hardwarová svítilna hlavní kamery a obrazovkový fallback jsou implementované; zbývá terénní ověření).
-- [~] Identifikovat kamery světelnou sekvencí: společný záblesk hlavní kamery, samostatný záblesk každé top/vedlejší kamery a závěrečný dvojitý podpis hlavní kamery; kroky se ukládají do telemetrie všech kamer i společného `events.jsonl` (zbývá terénní ověření viditelnosti).
+- [~] Identifikovat kamery světelnou sekvencí: společný záblesk hlavní kamery, samostatný záblesk každé vedlejší kamery a závěrečný dvojitý podpis hlavní kamery; top-over sekvenci pouze pozoruje, kroky se ukládají do telemetrie všech kamer i společného `events.jsonl` (zbývá terénní ověření viditelnosti).
 - [ ] Přidat volitelnou zvukovou klapku pro záložní synchronizaci.
 - [~] V postprocessingu detekovat klapku ve videích a uložit korekci časové osy (FFmpeg analyzuje skok průměrného jasu kolem telemetrického markeru, ukládá jistotu a korekci do `analysis.json` a reportu; zbývá ověření na různých scénách a světelných podmínkách).
 - [~] Ověřit omezení ovládání svítilny v cílových mobilních prohlížečích (Chrome/Android je podporován experimentálně; externí světlo a testovací matice chybí).
@@ -99,11 +99,29 @@ Stavy: `[x]` implementováno, `[~]` implementováno
 
 **Hotovo, když:** centrální uzel obsahuje úplnou, ověřenou a synchronizovanou sadu videí připravenou pro použití jiným projektem.
 
+## 8. Top-down analýza
+
+- [x] Definovat souřadné systémy, referenční čas a verzované JSON schéma výstupu.
+- [ ] Přidat kalibrační workflow pro objektiv a rovinu scény (ArUco/ChArUco nebo ruční body).
+- [ ] Dekódovat PTS snímků a převést je přes korekci klapky na čas relace.
+- [ ] Implementovat první deterministický OpenCV detektor pro zvolené markery/objekty.
+- [ ] Udržovat stabilní identity stop a exportovat detekované i predikované vzorky s confidence.
+- [ ] Kalibrovat extrinsiky všech kamer vůči soustavě scény; neznámé hodnoty ponechat `null`.
+- [ ] Asociovat viditelné kamery/kameramany s `device_id` a porovnat jejich obrazové trajektorie s GNSS telemetrií.
+- [ ] Georeferencovat `scene_m` přes lokální ENU transformaci a reportovat prostorová rezidua i časovou interpolaci.
+- [ ] Přidat vizualizační overlay a validační test proti ručně změřenému ground truth.
+- [x] Přidat přenositelný `.multicam.zip` export/import s manifestem, ZIP64 a kontrolou SHA-256.
+- [ ] Přidat ComfyUI workflow pro top-down detekci a import výsledného JSON.
+- [ ] Přidat volitelný Ollama krok pro klasifikaci/popisy a kontrolu výsledků.
+
+**Hotovo, když:** záznam top kamery vytvoří validní
+`topdown-analysis.json`, jehož body mají ověřenou časovou a prostorovou chybu.
+
 ## Výslovně mimo scope
 
-- [ ] Kalibrace kamer a mapování prostorové geometrie.
+- [~] Obecná 3D rekonstrukce scény; rovinná kalibrace a pozice kamer jsou součástí fáze 8.
 - [x] GPS/orientační telemetrie byla na přání zahrnuta: GNSS, orientace a dostupný zoom se ukládají a zobrazují synchronně s videem.
-- [ ] Detekce objektů a osob, pose estimation a tracking.
+- [~] Pose estimation; 2D tracking v rovině scény je součástí fáze 8.
 - [ ] Rekonstrukce scény, asociační matice a vícekamerová fúze.
 - [ ] AI pipeline, ComfyUI, Ollama a optimalizace v C++.
 

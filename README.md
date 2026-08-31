@@ -22,12 +22,16 @@ Projekt řeší výhradně:
 - synchronizaci vzniklých záznamů;
 - bezpečný přenos a společné uložení na centrálním notebooku.
 
-Mimo scope jsou kalibrace prostoru, rekonstrukce scény, detekce a sledování osob, pose estimation, AI analýza, vícekamerová fúze, ComfyUI/Ollama a optimalizace zpracování v C++.
+Navazující scope zahrnuje kalibraci roviny scény a OpenCV analýzu top-down
+kamery: společnou referenční časovou osu, polohy sledovaných objektů a
+kalibrované pozice kamer ve verzovaném JSON výstupu. Rekonstrukce obecné 3D
+scény, pose estimation, vícekamerová fúze a generativní AI zůstávají mimo scope.
 
 ## Dokumentace
 
 - [ROADMAP.md](ROADMAP.md) – fáze vývoje, akceptační kritéria a terénní checklist
 - [ARCHITECTURE.md](ARCHITECTURE.md) – komponenty, datový tok a zásadní technická omezení
+- [ANALYSIS.md](ANALYSIS.md) – souřadné systémy, kalibrace a výstup top-down analýzy
 
 ## Lokální spuštění
 
@@ -103,7 +107,28 @@ Spuštění a zastavení záznamu lze ovládat z režisérského pultu i z hlavn
 
 Ke každému videu klient vytváří párovaný telemetrický soubor JSON Lines s monotónními a UTC časy startu, stopu, pravidelných vzorků hodin a přijetí synchronizační klapky. Každý vzorek obsahuje také poslední GNSS pozici, orientaci zařízení a skutečné nastavení zoomu kamerového tracku. Webová API neposkytují spolehlivě fyzický úhel záběru, proto je `field_of_view_deg` bez kalibrace telefonu explicitně `null`; `zoom_ratio`, rozlišení a ostatní dostupné hodnoty se ukládají přímo. Zařízení přejde do stavu `verified` až po ověření videa i telemetrie.
 
-Dvě sekundy po povelu ke spuštění záznamu server automaticky spustí identifikační světelnou klapku: úvodní synchronizační záblesk hlavní kamery, samostatný záblesk každé top/vedlejší kamery a závěrečný dvojitý podpis hlavní kamery. Každý krok se uloží do telemetrie všech kamer a do společného `events.jsonl` relace. Cílová kamera zkusí přes `MediaStreamTrack.applyConstraints()` zapnout hardwarovou svítilnu (`torch`), což je určeno především pro Chrome na Androidu. Pokud prohlížeč nebo telefon tuto možnost neposkytne, použije se celoobrazovkový bílý záblesk.
+Dvě sekundy po povelu ke spuštění záznamu server automaticky spustí identifikační světelnou klapku: úvodní synchronizační záblesk hlavní kamery, samostatný záblesk každé vedlejší kamery a závěrečný dvojitý podpis hlavní kamery. Top-over kamera sekvenci pouze pozoruje a sama nikdy nebliká. Každý krok se uloží do telemetrie všech kamer a do společného `events.jsonl` relace. Cílová kamera zkusí přes `MediaStreamTrack.applyConstraints()` zapnout hardwarovou svítilnu (`torch`), což je určeno především pro Chrome na Androidu. Pokud prohlížeč nebo telefon tuto možnost neposkytne, použije se celoobrazovkový bílý záblesk.
+
+## Přenos relace na zpracovací stroj
+
+Celou relaci lze bez změny původních videí zabalit do jednoho ZIP64 souboru s
+příponou `.multicam.zip`. Balík obsahuje manifest a SHA-256 každého souboru;
+vynechává pouze obnovitelné playback proxy a již složené uploadové chunky.
+
+```bash
+python -m backend.app.bundle --data-dir data/sessions export SESSION_UUID session.multicam.zip
+python -m backend.app.bundle --data-dir /data/multicam import session.multicam.zip
+```
+
+Import nejprve ověří seznam, velikosti a checksumy do dočasného adresáře a
+teprve potom relaci atomicky zpřístupní. Existující relaci stejného UUID nikdy
+nepřepíše. Po importu stačí zpracovací server restartovat, aby relaci načetl.
+
+Pro přesné CV kroky je primární deterministická OpenCV/PyAV pipeline. ComfyUI
+je preferované orchestrační a vizuální rozhraní pro detekční/modelové workflow;
+balík pro něj zůstává adresářovou sadou videí a JSON. Ollama může nad
+vybranými snímky a strukturovanými výsledky dělat klasifikaci, popis a kontrolu,
+ale nemá nahrazovat dekódování PTS, kalibraci ani numerický tracking.
 
 Každý blok z `MediaRecorder` a každá telemetrická událost se průběžně ukládají do IndexedDB. Po reloadu aplikace zobrazí dokončené i přerušené lokální záznamy a dovolí jejich upload zopakovat. Kamerový pohled prohledává celý lokální archiv prohlížeče, nikoli pouze záznamy současného `device_id`, takže najde také data ze starší relace, role nebo registrace zařízení. Ověřenou lokální kopii lze smazat pouze samostatným tlačítkem a po výslovném potvrzení uživatele.
 

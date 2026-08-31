@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .bundle import BundleError, export_session
 from .models import (
     Device,
     CaptureMedia,
@@ -30,6 +31,20 @@ from .websocket import connections
 
 app = FastAPI(title="MultiCam control server", version="0.1.0")
 active_clap_sequences: set[UUID] = set()
+
+
+def clap_sequence_steps(session: Session) -> list[tuple[str, Device | None]]:
+    connected = [device for device in session.devices.values() if device.connected]
+    main = next((device for device in connected if device.role == DeviceRole.MAIN_CAMERA), None)
+    # The top camera observes the sequence and must never emit its own flash.
+    secondary = [device for device in connected if device.role == DeviceRole.SECONDARY_CAMERA]
+    steps: list[tuple[str, Device | None]] = []
+    if main:
+        steps.append(("sync", main))
+    steps.extend(("camera_id", device) for device in secondary)
+    if main:
+        steps.extend([("main_signature", main), ("main_signature", main)])
+    return steps
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "https://localhost:5173"],
@@ -189,6 +204,24 @@ async def get_session_report(session_id: UUID) -> dict:
     return uploads.build_report(session)
 
 
+@app.get("/api/sessions/{session_id}/bundle", response_class=FileResponse)
+async def get_session_bundle(session_id: UUID) -> FileResponse:
+    try:
+        await store.get(session_id)
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Session not found") from error
+    destination = uploads.root / ".exports" / f"{session_id}.multicam.zip"
+    try:
+        await asyncio.to_thread(export_session, uploads.root, session_id, destination)
+    except BundleError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return FileResponse(
+        destination,
+        media_type="application/zip",
+        filename=f"{session_id}.multicam.zip",
+    )
+
+
 @app.post("/api/sessions/{session_id}/analyze-claps")
 async def analyze_session_claps(session_id: UUID) -> dict:
     try:
@@ -323,15 +356,7 @@ async def run_clap_sequence(session_id: UUID, automatic: bool) -> None:
         return
     active_clap_sequences.add(session_id)
     sequence_id = str(uuid4())
-    connected = [device for device in session.devices.values() if device.connected]
-    main = next((device for device in connected if device.role == DeviceRole.MAIN_CAMERA), None)
-    secondary = [device for device in connected if device.role != DeviceRole.MAIN_CAMERA]
-    steps: list[tuple[str, Device | None]] = []
-    if main:
-        steps.append(("sync", main))
-    steps.extend(("camera_id", device) for device in secondary)
-    if main:
-        steps.extend([("main_signature", main), ("main_signature", main)])
+    steps = clap_sequence_steps(session)
     uploads.append_session_event(session_id, {
         "type": "clap.sequence.started", "sequence_id": sequence_id,
         "automatic": automatic, "created_at": datetime.now(timezone.utc).isoformat(),

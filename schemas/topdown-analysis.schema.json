@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multicam.local/schemas/topdown-analysis-1.0.json",
+  "title": "MultiCam top-down analysis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "session_id", "take_id", "source", "timeline", "scene", "cameras", "tracks", "provenance"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "session_id": { "type": "string", "format": "uuid" },
+    "take_id": { "type": "string", "format": "uuid" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capture_id", "device_id", "role", "video_sha256", "width_px", "height_px"],
+      "properties": {
+        "capture_id": { "type": "string", "format": "uuid" },
+        "device_id": { "type": "string", "format": "uuid" },
+        "role": { "const": "top_camera" },
+        "video_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "width_px": { "type": "integer", "minimum": 1 },
+        "height_px": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "timeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "origin", "sync_point_source_seconds"],
+      "properties": {
+        "unit": { "const": "seconds" },
+        "origin": { "const": "session_sync_marker" },
+        "sync_point_source_seconds": { "type": "number", "minimum": 0 },
+        "start_reference_seconds": { "type": ["number", "null"] },
+        "end_reference_seconds": { "type": ["number", "null"] }
+      }
+    },
+    "scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coordinate_system", "plane", "calibration_points", "image_to_scene_homography", "georeference"],
+      "properties": {
+        "coordinate_system": { "const": "right_handed_meters" },
+        "plane": { "const": "z=0" },
+        "bounds_m": { "$ref": "#/$defs/bounds" },
+        "calibration_points": {
+          "type": "array",
+          "minItems": 4,
+          "items": { "$ref": "#/$defs/calibrationPoint" }
+        },
+        "image_to_scene_homography": { "$ref": "#/$defs/matrix3" },
+        "reprojection_error_px": { "type": ["number", "null"], "minimum": 0 },
+        "georeference": { "oneOf": [{ "$ref": "#/$defs/georeference" }, { "type": "null" }] }
+      }
+    },
+    "cameras": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/camera" }
+    },
+    "tracks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/track" }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created_at", "software", "software_version", "detector", "parameters"],
+      "properties": {
+        "created_at": { "type": "string", "format": "date-time" },
+        "software": { "type": "string", "minLength": 1 },
+        "software_version": { "type": "string", "minLength": 1 },
+        "detector": { "type": "string", "minLength": 1 },
+        "parameters": { "type": "object" }
+      }
+    }
+  },
+  "$defs": {
+    "vec2": { "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number" }], "items": false },
+    "vec3nullable": { "type": ["array", "null"], "prefixItems": [{ "type": "number" }, { "type": "number" }, { "type": "number" }], "items": false },
+    "matrix3": {
+      "type": "array", "minItems": 3, "maxItems": 3,
+      "items": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number" } }
+    },
+    "bounds": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["min_xy", "max_xy"],
+      "properties": { "min_xy": { "$ref": "#/$defs/vec2" }, "max_xy": { "$ref": "#/$defs/vec2" } }
+    },
+    "calibrationPoint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "image_px", "scene_m"],
+      "properties": { "id": { "type": "string" }, "image_px": { "$ref": "#/$defs/vec2" }, "scene_m": { "$ref": "#/$defs/vec2" } }
+    },
+    "camera": {
+      "type": "object", "additionalProperties": false,
+      "required": ["device_id", "role", "position_scene_m", "rotation_scene_from_camera", "calibration_method"],
+      "properties": {
+        "device_id": { "type": "string", "format": "uuid" },
+        "role": { "enum": ["main_camera", "top_camera", "secondary_camera"] },
+        "position_scene_m": { "$ref": "#/$defs/vec3nullable" },
+        "rotation_scene_from_camera": { "oneOf": [{ "$ref": "#/$defs/matrix3" }, { "type": "null" }] },
+        "calibration_method": { "enum": ["aruco", "charuco", "manual", "unknown"] },
+        "reprojection_error_px": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "track": {
+      "type": "object", "additionalProperties": false,
+      "required": ["track_id", "object_class", "associated_device_id", "samples", "gnss_comparison"],
+      "properties": {
+        "track_id": { "type": "string", "minLength": 1 },
+        "object_class": { "type": ["string", "null"] },
+        "associated_device_id": { "type": ["string", "null"], "format": "uuid" },
+        "samples": { "type": "array", "items": { "$ref": "#/$defs/sample" } },
+        "gnss_comparison": { "type": "array", "items": { "$ref": "#/$defs/gnssComparison" } }
+      }
+    },
+    "sample": {
+      "type": "object", "additionalProperties": false,
+      "required": ["reference_time_s", "source_pts_s", "frame_index", "image_px", "scene_m", "bbox_image_px", "confidence", "state"],
+      "properties": {
+        "reference_time_s": { "type": "number" },
+        "source_pts_s": { "type": "number", "minimum": 0 },
+        "frame_index": { "type": "integer", "minimum": 0 },
+        "image_px": { "$ref": "#/$defs/vec2" },
+        "scene_m": { "$ref": "#/$defs/vec2" },
+        "bbox_image_px": {
+          "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number" }, { "type": "number", "minimum": 0 }, { "type": "number", "minimum": 0 }], "items": false
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "state": { "enum": ["detected", "predicted", "interpolated"] }
+      }
+    },
+    "georeference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["origin_wgs84", "scene_from_enu", "method", "fit_error_m"],
+      "properties": {
+        "origin_wgs84": {
+          "type": "array", "prefixItems": [{ "type": "number", "minimum": -90, "maximum": 90 }, { "type": "number", "minimum": -180, "maximum": 180 }, { "type": ["number", "null"] }], "items": false
+        },
+        "scene_from_enu": { "$ref": "#/$defs/matrix3" },
+        "method": { "enum": ["surveyed_points", "trajectory_fit", "manual"] },
+        "fit_error_m": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "gnssComparison": {
+      "type": "object", "additionalProperties": false,
+      "required": ["reference_time_s", "image_scene_m", "gnss_wgs84", "gnss_accuracy_m", "gnss_scene_m", "residual_m", "time_alignment"],
+      "properties": {
+        "reference_time_s": { "type": "number" },
+        "image_scene_m": { "$ref": "#/$defs/vec2" },
+        "gnss_wgs84": {
+          "type": "array", "prefixItems": [{ "type": "number", "minimum": -90, "maximum": 90 }, { "type": "number", "minimum": -180, "maximum": 180 }], "items": false
+        },
+        "gnss_accuracy_m": { "type": ["number", "null"], "minimum": 0 },
+        "gnss_scene_m": { "$ref": "#/$defs/vec2" },
+        "residual_m": { "type": "number", "minimum": 0 },
+        "time_alignment": { "enum": ["exact", "nearest", "interpolated"] }
+      }
+    }
+  }
+}

@@ -362,6 +362,10 @@ async function downloadSessionReport(): Promise<void> {
   }
 }
 
+function downloadSessionBundle(): void {
+  if (session.value) window.location.assign(`/api/sessions/${session.value.session_id}/bundle`)
+}
+
 async function analyzeClaps(): Promise<void> {
   if (!session.value || analyzingClaps.value) return
   analyzingClaps.value = true
@@ -924,7 +928,7 @@ onBeforeUnmount(() => {
             <span :class="['dot', { offline: !device.connected || deviceUploadStatus[device.device_id]?.status === 'retrying' }]">{{ !device.connected ? 'odpojeno' : deviceUploadStatus[device.device_id] ? `${deviceUploadStatus[device.device_id].status === 'retrying' ? 'čeká na retry' : deviceUploadStatus[device.device_id].status === 'verified' ? 'ověřeno' : 'přenos'} ${deviceUploadStatus[device.device_id].percent} %` : device.state }}</span>
           </article>
         </div>
-        <div class="media-heading"><h3>Záznamy ({{ sessionMedia.length }})</h3><div class="heading-actions"><button class="small secondary" :disabled="analyzingClaps || !sessionMedia.length" @click="analyzeClaps">{{ analyzingClaps ? 'Analyzuji…' : 'Najít klapky' }}</button><button class="small secondary" @click="downloadSessionReport">Stáhnout report</button><button class="small" @click="loadSessionMedia">Obnovit</button></div></div>
+        <div class="media-heading"><h3>Záznamy ({{ sessionMedia.length }})</h3><div class="heading-actions"><button class="small secondary" :disabled="analyzingClaps || !sessionMedia.length" @click="analyzeClaps">{{ analyzingClaps ? 'Analyzuji…' : 'Najít klapky' }}</button><button class="small secondary" :disabled="!sessionMedia.length" @click="downloadSessionBundle">Stáhnout celou relaci</button><button class="small secondary" @click="downloadSessionReport">Stáhnout report</button><button class="small" @click="loadSessionMedia">Obnovit</button></div></div>
         <p v-if="clapAnalysisMessage" class="muted">{{ clapAnalysisMessage }}</p>
         <p v-if="!sessionMedia.length" class="muted">Relace zatím nemá ověřené záznamy.</p>
         <div v-else class="take-list">

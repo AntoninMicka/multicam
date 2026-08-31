@@ -7,6 +7,8 @@
 3. **FastAPI server** – distribuce PWA, WebSocket řízení, příjem bloků, kontrola integrity a manifest relace.
 4. **Diskové úložiště notebooku** – neměnné surové soubory organizované podle relace a zařízení.
 5. **Synchronizační krok** – určení časového posunu videí podle klapky a uložení korekcí do manifestu.
+6. **Top-down analýza** – reprodukovatelný postprocessing ověřeného videa,
+   kalibrace roviny scény a export trajektorií; běží odděleně od capture serveru.
 
 ## Datový tok
 
@@ -36,4 +38,6 @@ sessions/<session_id>/
 
 ## Rozsah MVP
 
-MVP i celý tento projekt končí ověřeným uložením videí na notebooku a jejich časovým zarovnáním. Kalibrace, analýza obsahu, tracking, rekonstrukce, vícekamerová fúze a AI zpracování patří případně do samostatného navazujícího projektu.
+Capture MVP končí ověřeným uložením a časovým zarovnáním. Tento repozitář nově
+obsahuje také navazující, oddělenou OpenCV analýzu top-down kamery. Její
+verzovaný výstup je odvozený artefakt a nikdy nemění zdrojové záznamy.
