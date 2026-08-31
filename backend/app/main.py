@@ -25,6 +25,7 @@ from .models import (
     UploadReceipt,
     UploadStatus,
 )
+from .mosaic import MosaicError, render_mosaic
 from .store import SessionNotFoundError, store
 from .uploads import UploadConflictError, UploadNotFoundError, uploads
 from .websocket import connections
@@ -244,6 +245,33 @@ async def get_take_bundle(session_id: UUID, take_id: UUID) -> FileResponse:
         media_type="application/zip",
         filename=f"take-{take_id}.multicam.zip",
     )
+
+
+@app.get("/api/sessions/{session_id}/takes/{take_id}/mosaic", response_class=FileResponse)
+async def get_take_mosaic(session_id: UUID, take_id: UUID) -> FileResponse:
+    try:
+        session = await store.get(session_id)
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Session not found") from error
+    captures = [media for media in uploads.list_media(session) if (media.take_id or media.capture_id) == take_id]
+    if not captures:
+        raise HTTPException(status_code=404, detail="Recording group not found")
+    # Stable role order makes the matrix predictable: main, top, then sides.
+    role_order = {DeviceRole.MAIN_CAMERA: 0, DeviceRole.TOP_CAMERA: 1, DeviceRole.SECONDARY_CAMERA: 2}
+    captures.sort(key=lambda media: (role_order[media.role], media.device_name, str(media.capture_id)))
+    try:
+        sources = [uploads.playback_path(session_id, media.device_id, media.capture_id) for media in captures]
+    except UploadNotFoundError as error:
+        raise HTTPException(status_code=409, detail="A recording is missing") from error
+    main_index = next((index for index, media in enumerate(captures) if media.role == DeviceRole.MAIN_CAMERA), None)
+    destination = uploads.root / ".exports" / f"{session_id}-{take_id}-mosaic.mp4"
+    try:
+        await asyncio.to_thread(
+            render_mosaic, sources, [media.sync_point_seconds for media in captures], destination, main_index,
+        )
+    except MosaicError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    return FileResponse(destination, media_type="video/mp4", filename=f"take-{take_id}-mosaic.mp4")
 
 
 @app.post("/api/sessions/{session_id}/analyze-claps")

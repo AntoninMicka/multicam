@@ -127,6 +127,11 @@ Jednotlivé klapky lze stáhnout stejným formátem přímo tlačítkem u skupin
 záznamů. Dílčí balík má v manifestu `scope: "take"` a je určený ke zpracování,
 nikoli k importu jako úplná relace.
 
+U každé klapky lze také vyrenderovat jedno MP4 s automatickou maticí záběrů.
+Pořadí je hlavní kamera, top-over a vedlejší kamery. Pokud byla obrazová klapka
+analyzována, vstupy se oříznou na její synchronizační bod; jinak začínají od
+počátku souboru. Zvuk se přebírá z hlavní kamery a originály se nemění.
+
 Pro přesné CV kroky je primární deterministická OpenCV/PyAV pipeline. ComfyUI
 je preferované orchestrační a vizuální rozhraní pro detekční/modelové workflow;
 balík pro něj zůstává adresářovou sadou videí a JSON. Ollama může nad

@@ -51,6 +51,11 @@ function downloadTake(): void {
   const takeId = props.captures[0]?.take_id ?? props.captures[0]?.capture_id
   if (props.sessionId && takeId) window.location.assign(`/api/sessions/${props.sessionId}/takes/${takeId}/bundle`)
 }
+
+function downloadMosaic(): void {
+  const takeId = props.captures[0]?.take_id ?? props.captures[0]?.capture_id
+  if (props.sessionId && takeId) window.location.assign(`/api/sessions/${props.sessionId}/takes/${takeId}/mosaic`)
+}
 </script>
 
 <template>
@@ -62,6 +67,7 @@ function downloadTake(): void {
       </div>
       <div class="group-actions">
         <button v-if="sessionId" class="small secondary" @click="downloadTake">Stáhnout klapku</button>
+        <button v-if="sessionId" class="small secondary" @click="downloadMosaic">Stáhnout matici MP4</button>
         <button class="small" @click="togglePlayback">{{ playing ? '❚❚ Pozastavit vše' : '▶ Přehrát vše' }}</button>
       </div>
     </header>
