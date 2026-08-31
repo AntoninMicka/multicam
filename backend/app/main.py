@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .bundle import BundleError, export_session
+from .bundle import BundleError, export_session, export_take
 from .models import (
     Device,
     CaptureMedia,
@@ -219,6 +219,30 @@ async def get_session_bundle(session_id: UUID) -> FileResponse:
         destination,
         media_type="application/zip",
         filename=f"{session_id}.multicam.zip",
+    )
+
+
+@app.get("/api/sessions/{session_id}/takes/{take_id}/bundle", response_class=FileResponse)
+async def get_take_bundle(session_id: UUID, take_id: UUID) -> FileResponse:
+    try:
+        session = await store.get(session_id)
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Session not found") from error
+    captures = [media for media in uploads.list_media(session) if (media.take_id or media.capture_id) == take_id]
+    if not captures:
+        raise HTTPException(status_code=404, detail="Recording group not found")
+    destination = uploads.root / ".exports" / f"{session_id}-{take_id}.multicam.zip"
+    try:
+        await asyncio.to_thread(
+            export_take, uploads.root, session_id, take_id,
+            {media.capture_id for media in captures}, destination,
+        )
+    except BundleError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return FileResponse(
+        destination,
+        media_type="application/zip",
+        filename=f"take-{take_id}.multicam.zip",
     )
 
 

@@ -123,6 +123,9 @@ python -m backend.app.bundle --data-dir /data/multicam import session.multicam.z
 Import nejprve ověří seznam, velikosti a checksumy do dočasného adresáře a
 teprve potom relaci atomicky zpřístupní. Existující relaci stejného UUID nikdy
 nepřepíše. Po importu stačí zpracovací server restartovat, aby relaci načetl.
+Jednotlivé klapky lze stáhnout stejným formátem přímo tlačítkem u skupiny
+záznamů. Dílčí balík má v manifestu `scope: "take"` a je určený ke zpracování,
+nikoli k importu jako úplná relace.
 
 Pro přesné CV kroky je primární deterministická OpenCV/PyAV pipeline. ComfyUI
 je preferované orchestrační a vizuální rozhraní pro detekční/modelové workflow;

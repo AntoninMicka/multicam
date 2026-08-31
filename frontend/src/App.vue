@@ -932,7 +932,7 @@ onBeforeUnmount(() => {
         <p v-if="clapAnalysisMessage" class="muted">{{ clapAnalysisMessage }}</p>
         <p v-if="!sessionMedia.length" class="muted">Relace zatím nemá ověřené záznamy.</p>
         <div v-else class="take-list">
-          <CaptureGroup v-for="group in captureGroups" :key="group.takeId" :captures="group.captures" />
+          <CaptureGroup v-for="group in captureGroups" :key="group.takeId" :captures="group.captures" :session-id="session.session_id" />
         </div>
       </template>
       <template v-else>

@@ -3,7 +3,7 @@ import { onBeforeUnmount, ref } from 'vue'
 import type { CaptureMedia } from './api'
 import CapturePlayer from './CapturePlayer.vue'
 
-const props = defineProps<{ captures: CaptureMedia[] }>()
+const props = defineProps<{ captures: CaptureMedia[]; sessionId?: string }>()
 const players = ref<Array<InstanceType<typeof CapturePlayer>>>([])
 const playing = ref(false)
 const playbackError = ref('')
@@ -46,6 +46,11 @@ function formattedTime(): string {
   const createdAt = props.captures.find((capture) => capture.created_at)?.created_at
   return createdAt ? new Date(createdAt).toLocaleString() : 'čas není známý'
 }
+
+function downloadTake(): void {
+  const takeId = props.captures[0]?.take_id ?? props.captures[0]?.capture_id
+  if (props.sessionId && takeId) window.location.assign(`/api/sessions/${props.sessionId}/takes/${takeId}/bundle`)
+}
 </script>
 
 <template>
@@ -55,7 +60,10 @@ function formattedTime(): string {
         <strong>Klapka · {{ formattedTime() }}</strong>
         <small>{{ captures.length }} {{ captures.length === 1 ? 'kamera' : 'kamery' }}</small>
       </div>
-      <button class="small" @click="togglePlayback">{{ playing ? '❚❚ Pozastavit vše' : '▶ Přehrát vše' }}</button>
+      <div class="group-actions">
+        <button v-if="sessionId" class="small secondary" @click="downloadTake">Stáhnout klapku</button>
+        <button class="small" @click="togglePlayback">{{ playing ? '❚❚ Pozastavit vše' : '▶ Přehrát vše' }}</button>
+      </div>
     </header>
     <p v-if="playbackError" class="error">{{ playbackError }}</p>
     <div class="stream-matrix">
@@ -74,6 +82,7 @@ function formattedTime(): string {
 .capture-group { padding: 16px; border: 1px solid #405170; border-radius: 18px; background: #111b2d; }
 header { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
 header div { display: grid; gap: 4px; }
+.group-actions { display: flex; grid-auto-flow: column; gap: 8px; }
 small { color: #8391a7; }
 .stream-matrix { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 14px; }
 .error { margin-bottom: 12px; }

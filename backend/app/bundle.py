@@ -48,18 +48,24 @@ def _included_files(session_dir: Path) -> list[Path]:
     return sorted(result)
 
 
-def export_session(data_dir: Path, session_id: UUID, destination: Path) -> Path:
-    session_dir = data_dir.resolve() / str(session_id)
-    if not (session_dir / "session.json").is_file():
-        raise BundleError(f"Session {session_id} was not found")
-    files = _included_files(session_dir)
+def _write_bundle(
+    session_dir: Path,
+    session_id: UUID,
+    destination: Path,
+    files: list[Path],
+    *,
+    scope: str,
+    take_id: UUID | None = None,
+) -> Path:
     entries = []
     for path in files:
         relative = path.relative_to(session_dir).as_posix()
         entries.append({"path": relative, "size_bytes": path.stat().st_size, "sha256": _sha256(path)})
     manifest = {
         "bundle_version": BUNDLE_VERSION,
+        "scope": scope,
         "session_id": str(session_id),
+        "take_id": str(take_id) if take_id else None,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "layout": "session-directory",
         "files": entries,
@@ -85,6 +91,50 @@ def export_session(data_dir: Path, session_id: UUID, destination: Path) -> Path:
     return destination
 
 
+def export_session(data_dir: Path, session_id: UUID, destination: Path) -> Path:
+    session_dir = data_dir.resolve() / str(session_id)
+    if not (session_dir / "session.json").is_file():
+        raise BundleError(f"Session {session_id} was not found")
+    return _write_bundle(session_dir, session_id, destination, _included_files(session_dir), scope="session")
+
+
+def export_take(
+    data_dir: Path,
+    session_id: UUID,
+    take_id: UUID,
+    capture_ids: set[UUID],
+    destination: Path,
+) -> Path:
+    session_dir = data_dir.resolve() / str(session_id)
+    if not (session_dir / "session.json").is_file():
+        raise BundleError(f"Session {session_id} was not found")
+    selected = {str(capture_id) for capture_id in capture_ids}
+    files: set[Path] = set()
+    for name in ("session.json", "events.jsonl", "analysis.json", "report.json"):
+        path = session_dir / name
+        if path.is_file():
+            files.add(path)
+    take_analysis = session_dir / "analysis" / str(take_id)
+    if take_analysis.is_dir():
+        files.update(path for path in take_analysis.rglob("*") if path.is_file())
+    for metadata_path in session_dir.glob("devices/*/.uploads/*/upload.json"):
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if metadata.get("capture_id") not in selected or not metadata.get("complete"):
+            continue
+        files.add(metadata_path)
+        receipt_path = metadata.get("receipt", {}).get("file_path")
+        if receipt_path:
+            artifact = (data_dir.resolve() / receipt_path).resolve()
+            if artifact.is_file() and artifact.is_relative_to(session_dir):
+                files.add(artifact)
+    if not any(path.suffix.lower() in {".webm", ".mp4", ".mov"} for path in files):
+        raise BundleError(f"Take {take_id} has no completed recordings")
+    return _write_bundle(session_dir, session_id, destination, sorted(files), scope="take", take_id=take_id)
+
+
 def _safe_member(name: str) -> PurePosixPath:
     path = PurePosixPath(name)
     if path.is_absolute() or ".." in path.parts or not name.startswith("session/"):
@@ -102,6 +152,8 @@ def import_session(data_dir: Path, source: Path) -> UUID:
             raise BundleError("Bundle manifest is missing or invalid") from error
         if manifest.get("bundle_version") != BUNDLE_VERSION:
             raise BundleError(f"Unsupported bundle version: {manifest.get('bundle_version')}")
+        if manifest.get("scope", "session") != "session":
+            raise BundleError("A take bundle is intended for processing and cannot be imported as a full session")
         try:
             session_id = UUID(manifest["session_id"])
         except (KeyError, ValueError) as error:

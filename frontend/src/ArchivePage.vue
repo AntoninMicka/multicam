@@ -103,7 +103,7 @@ onMounted(loadArchive)
           <div><strong>{{ group.sessionName }}</strong><small>Klapka {{ group.captures[0]?.created_at ? new Date(group.captures[0].created_at).toLocaleString() : group.takeId.slice(0, 8) }}</small></div>
           <button class="small danger" :disabled="deleting" @click="removeGroup(group)">Smazat celou klapku</button>
         </header>
-        <CaptureGroup :captures="group.captures" />
+        <CaptureGroup :captures="group.captures" :session-id="group.sessionId" />
         <div class="capture-actions">
           <button v-for="capture in group.captures" :key="capture.capture_id" class="small danger" :disabled="deleting" @click="removeCapture(capture)">
             Smazat: {{ capture.device_name }}
