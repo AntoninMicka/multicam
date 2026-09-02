@@ -49,6 +49,8 @@ button.danger { color: #fecaca; border: 1px solid #7f1d1d; background: transpare
 .session-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 9px; margin-bottom: 30px; padding-bottom: 26px; border-bottom: 1px solid #283750; }
 .session-list h2 { grid-column: 1 / -1; }
 button.session-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; color: #e8edf5; text-align: left; border: 1px solid #405170; background: #0b1322; }
+.session-row { display: flex; gap: 8px; align-items: stretch; }
+.session-row .session-item { flex: 1; }
 .session-item small { font-weight: 500; }
 .media-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 30px; }
 .media-heading h3 { margin: 0; }

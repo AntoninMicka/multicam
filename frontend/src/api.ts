@@ -9,6 +9,7 @@ export interface BackendInfo {
   address?: string
   last_seen?: number
   last_seen_seconds_ago?: number
+  active_session?: Session | null
 }
 
 export interface BackendStatus {
@@ -75,6 +76,10 @@ export function listSessions(): Promise<Session[]> {
 
 export function getSession(id: string): Promise<Session> {
   return fetch(`/api/sessions/${id}`).then(json<Session>)
+}
+
+export function deleteSession(id: string): Promise<{ deleted: boolean }> {
+  return fetch(`/api/sessions/${id}`, { method: 'DELETE' }).then(json<{ deleted: boolean }>)
 }
 
 export function getCurrentSession(): Promise<Session> {

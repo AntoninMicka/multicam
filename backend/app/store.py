@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -176,6 +177,18 @@ class SessionStore:
             session.state = state
             self._persist(session)
             return session.model_copy(deep=True)
+
+    async def delete(self, session_id: UUID) -> None:
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                raise SessionNotFoundError(session_id)
+            if session.state == SessionState.RECORDING:
+                raise ValueError("A recording session cannot be deleted")
+            session_dir = self.root / str(session_id)
+            self._sessions.pop(session_id)
+            if session_dir.is_dir():
+                shutil.rmtree(session_dir)
 
 
 store = SessionStore()

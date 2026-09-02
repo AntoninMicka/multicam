@@ -119,6 +119,11 @@ video i telemetrii všech svých telefonů, odešle kontrolovaně zabalenou lok�
 část klapky druhému notebooku. Import kontroluje velikosti a SHA-256 a je
 idempotentní.
 
+U nalezeného pultu se zobrazuje jeho aktivní relace a tlačítko pro připojení
+lokálního pultu. Relace lze odstranit ze seznamu; po potvrzení se smažou její
+manifesty, záznamy a odvozené soubory na obou dostupných federovaných pultech.
+Běžící relaci backend smazat odmítne.
+
 Přenos velkých souborů mezi pulty lze vypnout, aniž se vypne okamžité řízení:
 
 ```bash

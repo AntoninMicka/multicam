@@ -53,6 +53,20 @@ app = FastAPI(title="MultiCam control server", version="0.1.0", lifespan=lifespa
 active_clap_sequences: set[UUID] = set()
 analysis_tasks: set[asyncio.Task] = set()
 federation_tasks: set[asyncio.Task] = set()
+peer_active_sessions: dict[str, dict | None] = {}
+deleted_sessions_path = uploads.root / ".federation-deleted.json"
+try:
+    deleted_session_ids: set[UUID] = {UUID(value) for value in json.loads(deleted_sessions_path.read_text(encoding="utf-8"))}
+except (OSError, ValueError, TypeError):
+    deleted_session_ids = set()
+
+
+def persist_deleted_sessions() -> None:
+    path = uploads.root / ".federation-deleted.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(sorted(str(value) for value in deleted_session_ids)), encoding="utf-8")
+    os.replace(temporary, path)
 
 
 def clap_sequence_steps(session: Session) -> list[tuple[str, Device | None]]:
@@ -83,9 +97,12 @@ async def health() -> dict[str, str]:
 
 @app.get("/api/backends")
 async def list_backends() -> dict:
+    peers = discovery.snapshot()
+    for peer in peers:
+        peer["active_session"] = peer_active_sessions.get(peer["backend_id"])
     return {
         "self": {"backend_id": discovery.backend_id, "name": discovery.name, "url": discovery.advertised_url()},
-        "peers": discovery.snapshot(),
+        "peers": peers,
         "discovery_enabled": discovery.enabled,
         "federation_enabled": federation.enabled,
         "transfer_enabled": federation.transfer_enabled,
@@ -100,7 +117,20 @@ def require_federation_token(value: str | None) -> None:
 @app.get("/api/federation/snapshot")
 async def federation_snapshot(x_multicam_federation: str | None = Header(default=None)) -> dict:
     require_federation_token(x_multicam_federation)
-    return {"backend_id": discovery.backend_id, "sessions": [item.model_dump(mode="json") for item in await store.list()]}
+    sessions = [item for item in await store.list() if item.session_id not in deleted_session_ids]
+    return {
+        "backend_id": discovery.backend_id,
+        "sessions": [item.model_dump(mode="json") for item in sessions],
+        "deleted_session_ids": [str(value) for value in sorted(deleted_session_ids, key=str)],
+    }
+
+
+@app.post("/api/federation/delete-session")
+async def federation_delete_session(request: Request, x_multicam_federation: str | None = Header(default=None)) -> dict:
+    require_federation_token(x_multicam_federation)
+    session_id = UUID((await request.json())["session_id"])
+    await delete_session_data(session_id, relay=False)
+    return {"deleted": True}
 
 
 @app.post("/api/federation/control")
@@ -151,8 +181,20 @@ async def federation_sync_loop() -> None:
             for peer in discovery.snapshot():
                 try:
                     snapshot = await federation.get_snapshot(peer["url"])
-                    for raw in snapshot["sessions"]:
-                        merged = await store.merge_remote(Session.model_validate(raw), snapshot["backend_id"], discovery.backend_id)
+                    for deleted_id in snapshot.get("deleted_session_ids", []):
+                        remote_deleted = UUID(deleted_id)
+                        if remote_deleted not in deleted_session_ids:
+                            try:
+                                await delete_session_data(remote_deleted, relay=False)
+                            except HTTPException:
+                                pass
+                    remote_sessions = [Session.model_validate(raw) for raw in snapshot["sessions"]]
+                    active = next((item for item in remote_sessions if item.state != SessionState.STOPPED), None)
+                    peer_active_sessions[snapshot["backend_id"]] = active.model_dump(mode="json") if active else None
+                    for remote in remote_sessions:
+                        if remote.session_id in deleted_session_ids:
+                            continue
+                        merged = await store.merge_remote(remote, snapshot["backend_id"], discovery.backend_id)
                         await connections.broadcast(merged.session_id, {"type": "session.updated", "payload": merged.model_dump(mode="json")})
                 except (OSError, ValueError, KeyError, json.JSONDecodeError):
                     continue
@@ -171,6 +213,30 @@ async def hotspot_status() -> dict:
 @app.post("/api/sessions", response_model=Session, status_code=status.HTTP_201_CREATED)
 async def create_session(data: SessionCreate) -> Session:
     return await store.create(data)
+
+
+async def delete_session_data(session_id: UUID, *, relay: bool) -> None:
+    try:
+        await store.delete(session_id)
+    except SessionNotFoundError:
+        # A federated delete is idempotent.
+        if relay:
+            raise HTTPException(status_code=404, detail="Session not found")
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    deleted_session_ids.add(session_id)
+    persist_deleted_sessions()
+    await connections.broadcast(session_id, {"type": "session.deleted", "payload": {"session_id": str(session_id)}})
+    if relay:
+        task = asyncio.create_task(federation.broadcast_json("/api/federation/delete-session", {"session_id": str(session_id)}))
+        federation_tasks.add(task)
+        task.add_done_callback(federation_tasks.discard)
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: UUID) -> dict:
+    await delete_session_data(session_id, relay=True)
+    return {"deleted": True, "session_id": str(session_id)}
 
 
 @app.get("/api/sessions", response_model=list[Session])

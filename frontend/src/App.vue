@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   createSession,
+  deleteSession,
   analyzeSessionClaps,
   getCurrentSession,
   getSessionReport,
@@ -228,6 +229,15 @@ function connectSocket(id: string, cameraId?: string) {
       session.value = message.payload
       if (role.value === 'director') void loadSessionMedia()
     }
+    if (message.type === 'session.deleted') {
+      socket?.close()
+      socket = null
+      session.value = null
+      sessionMedia.value = []
+      availableSessions.value = await listSessions().catch(() => [])
+      error.value = 'Relace byla smazána na propojeném pultu.'
+      return
+    }
     if (message.type === 'clap.trigger' && role.value !== 'director' && recording.value) {
       recordTelemetry('sync_marker', message.payload)
       if (!message.payload.target_device_id ? role.value === 'main_camera' : message.payload.target_device_id === deviceId.value) flashClap()
@@ -324,6 +334,32 @@ async function selectSession(selected: Session) {
   session.value = await getSession(selected.session_id)
   connectSocket(selected.session_id)
   await loadSessionMedia()
+}
+
+async function joinFederatedSession(sessionId: string) {
+  try {
+    // Snapshot federace se slučuje na lokálním backendu; krátké opakování
+    // pokryje situaci, kdy už discovery relaci hlásí, ale první sync právě běží.
+    let selected: Session | undefined
+    for (let attempt = 0; attempt < 4 && !selected; attempt += 1) {
+      selected = await getSession(sessionId).catch(() => undefined)
+      if (!selected) await new Promise((resolve) => window.setTimeout(resolve, 500))
+    }
+    if (!selected) throw new Error('Aktivní relace ještě není na lokálním backendu dostupná.')
+    await selectSession(selected)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'K relaci druhého pultu se nelze připojit.'
+  }
+}
+
+async function removeSession(selected: Session) {
+  if (!window.confirm(`Smazat celou relaci „${selected.name}“ včetně záznamů na obou pultech? Tuto operaci nelze vrátit.`)) return
+  try {
+    await deleteSession(selected.session_id)
+    availableSessions.value = availableSessions.value.filter((item) => item.session_id !== selected.session_id)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'Relaci nelze smazat.'
+  }
 }
 
 async function backToSessions() {
@@ -875,13 +911,14 @@ onBeforeUnmount(() => {
       <button class="back" @click="role = null">← změnit roli</button>
       <template v-if="role === 'director'">
         <HotspotPanel />
-        <BackendPeers />
+        <BackendPeers @join-session="joinFederatedSession" />
         <button class="archive-button secondary" @click="archiveOpen = true">Archiv všech záznamů</button>
         <div v-if="availableSessions.length" class="session-list">
           <h2>Relace</h2>
-          <button v-for="item in availableSessions" :key="item.session_id" class="session-item" @click="selectSession(item)">
-            <span>{{ item.name }}</span><small>{{ new Date(item.created_at).toLocaleString() }} · {{ Object.keys(item.devices).length }} kamer</small>
-          </button>
+          <div v-for="item in availableSessions" :key="item.session_id" class="session-row">
+            <button class="session-item" @click="selectSession(item)"><span>{{ item.name }}</span><small>{{ new Date(item.created_at).toLocaleString() }} · {{ Object.keys(item.devices).length }} kamer</small></button>
+            <button class="small stop" :disabled="item.state === 'recording'" @click="removeSession(item)">Smazat</button>
+          </div>
         </div>
         <h2>Nová relace</h2>
         <label>Název <input v-model="sessionName" /></label>
@@ -911,7 +948,7 @@ onBeforeUnmount(() => {
         <button class="back" @click="backToSessions">← seznam relací</button>
         <button class="archive-button secondary" @click="archiveOpen = true">Archiv všech záznamů</button>
         <HotspotPanel />
-        <BackendPeers />
+        <BackendPeers @join-session="joinFederatedSession" />
         <h3>Zařízení ({{ devices.length }})</h3>
         <button class="preview-toggle secondary" :disabled="!connectedDevices.length || session.state === 'recording'" @click="toggleLivePreview">{{ livePreviewEnabled ? 'Vypnout živé náhledy' : 'Zapnout živé náhledy' }}</button>
         <div class="record-controls">

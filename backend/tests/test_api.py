@@ -7,8 +7,9 @@ from uuid import UUID
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.main import app
+from app.main import app, deleted_session_ids
 from app.federation import federation
+from app.models import SessionState
 from app.store import SessionStore, store
 from app.uploads import UploadService, uploads
 
@@ -24,6 +25,7 @@ def isolated_storage(tmp_path) -> None:
     store._sessions.clear()
     store.root = root
     uploads.root = root
+    deleted_session_ids.clear()
 
 
 def test_health() -> None:
@@ -91,6 +93,20 @@ def test_create_session_and_register_device() -> None:
 def test_unknown_session_is_404() -> None:
     response = asyncio.run(request("GET", "/api/sessions/00000000-0000-0000-0000-000000000000"))
     assert response.status_code == 404
+
+
+def test_session_can_be_deleted_but_not_while_recording(monkeypatch) -> None:
+    monkeypatch.setattr(federation, "token", "")
+    session = asyncio.run(request("POST", "/api/sessions", json={"name": "Ke smazání"})).json()
+    deleted = asyncio.run(request("DELETE", f"/api/sessions/{session['session_id']}"))
+    assert deleted.status_code == 200
+    assert asyncio.run(request("GET", f"/api/sessions/{session['session_id']}" )).status_code == 404
+    assert not (uploads.root / session["session_id"]).exists()
+
+    recording = asyncio.run(request("POST", "/api/sessions", json={"name": "Běží"})).json()
+    asyncio.run(store.set_state(UUID(recording["session_id"]), SessionState.RECORDING))
+    refused = asyncio.run(request("DELETE", f"/api/sessions/{recording['session_id']}"))
+    assert refused.status_code == 409
 
 
 def test_legacy_session_without_manifest_is_recovered(tmp_path) -> None:

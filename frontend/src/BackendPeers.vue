@@ -2,6 +2,8 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { getBackends, type BackendInfo } from './api'
 
+const emit = defineEmits<{ (event: 'join-session', sessionId: string): void }>()
+
 const peers = ref<BackendInfo[]>([])
 const own = ref<BackendInfo | null>(null)
 const error = ref('')
@@ -37,6 +39,9 @@ onBeforeUnmount(() => window.clearInterval(timer))
     <a v-for="peer in peers" :key="peer.backend_id" :href="peer.url" target="_blank" rel="noopener">
       {{ peer.name }} · {{ (peer.last_seen_seconds_ago ?? 0).toFixed(1) }} s
     </a>
+    <button v-for="peer in peers.filter(item => item.active_session)" :key="`join-${peer.backend_id}`" class="small" @click="emit('join-session', peer.active_session!.session_id)">
+      Připojit k „{{ peer.active_session!.name }}“ na {{ peer.name }}
+    </button>
   </div>
 </template>
 
