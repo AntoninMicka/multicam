@@ -4,6 +4,7 @@ import {
   createSession,
   deleteSession,
   analyzeSessionClaps,
+  activateSession,
   getCurrentSession,
   getSessionReport,
   getSession,
@@ -332,6 +333,7 @@ async function chooseRole(selectedRole: Role) {
 }
 
 async function selectSession(selected: Session) {
+  await activateSession(selected.session_id)
   session.value = await getSession(selected.session_id)
   connectSocket(selected.session_id)
   await loadSessionMedia()

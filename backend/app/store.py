@@ -19,7 +19,35 @@ class SessionStore:
         self._lock = asyncio.Lock()
         configured = os.environ.get("MULTICAM_DATA_DIR")
         self.root = root or Path(configured or "data/sessions").resolve()
+        self.active_session_id: UUID | None = None
+        self.active_changed_at: datetime | None = None
+        self.active_backend_id: str | None = None
         self._load()
+        self._load_active()
+
+    def _load_active(self) -> None:
+        try:
+            data = json.loads((self.root / ".active-session.json").read_text(encoding="utf-8"))
+            session_id = UUID(data["session_id"])
+            if session_id in self._sessions:
+                self.active_session_id = session_id
+                self.active_changed_at = datetime.fromisoformat(data["changed_at"])
+                self.active_backend_id = data.get("backend_id")
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+
+    def _persist_active(self) -> None:
+        if not self.active_session_id or not self.active_changed_at:
+            return
+        self.root.mkdir(parents=True, exist_ok=True)
+        path = self.root / ".active-session.json"
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({
+            "session_id": str(self.active_session_id),
+            "changed_at": self.active_changed_at.isoformat(),
+            "backend_id": self.active_backend_id,
+        }), encoding="utf-8")
+        os.replace(temporary, path)
 
     def _load(self) -> None:
         if not self.root.is_dir():
@@ -89,6 +117,10 @@ class SessionStore:
         async with self._lock:
             self._sessions[session.session_id] = session
             self._persist(session)
+            self.active_session_id = session.session_id
+            self.active_changed_at = utc_now()
+            self.active_backend_id = os.environ.get("MULTICAM_BACKEND_ID_RUNTIME")
+            self._persist_active()
         return session.model_copy(deep=True)
 
     async def list(self) -> list[Session]:
@@ -166,8 +198,37 @@ class SessionStore:
         async with self._lock:
             if not self._sessions:
                 raise SessionNotFoundError("current")
-            session = max(self._sessions.values(), key=lambda item: item.created_at)
+            session = self._sessions.get(self.active_session_id) if self.active_session_id else None
+            if session is None:
+                session = max(self._sessions.values(), key=lambda item: item.created_at)
             return session.model_copy(deep=True)
+
+    async def activate(
+        self, session_id: UUID, backend_id: str | None = None,
+        changed_at: datetime | None = None,
+    ) -> Session:
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                raise SessionNotFoundError(session_id)
+            candidate = changed_at or utc_now()
+            if self.active_changed_at and changed_at and candidate <= self.active_changed_at:
+                current = self._sessions.get(self.active_session_id)
+                return (current or session).model_copy(deep=True)
+            self.active_session_id = session_id
+            self.active_changed_at = candidate
+            self.active_backend_id = backend_id
+            self._persist_active()
+            return session.model_copy(deep=True)
+
+    def active_state(self) -> dict | None:
+        if not self.active_session_id or not self.active_changed_at:
+            return None
+        return {
+            "session_id": str(self.active_session_id),
+            "changed_at": self.active_changed_at.isoformat(),
+            "backend_id": self.active_backend_id,
+        }
 
     async def set_state(self, session_id: UUID, state: SessionState) -> Session:
         async with self._lock:
@@ -187,6 +248,11 @@ class SessionStore:
                 raise ValueError("A recording session cannot be deleted")
             session_dir = self.root / str(session_id)
             self._sessions.pop(session_id)
+            if self.active_session_id == session_id:
+                self.active_session_id = None
+                self.active_changed_at = None
+                self.active_backend_id = None
+                (self.root / ".active-session.json").unlink(missing_ok=True)
             if session_dir.is_dir():
                 shutil.rmtree(session_dir)
 

@@ -109,6 +109,10 @@ export function getSession(id: string): Promise<Session> {
   return fetch(`/api/sessions/${id}`).then(json<Session>)
 }
 
+export function activateSession(id: string): Promise<Session> {
+  return fetch(`/api/sessions/${id}/activate`, { method: 'POST' }).then(json<Session>)
+}
+
 export function deleteSession(id: string): Promise<{ deleted: boolean }> {
   return fetch(`/api/sessions/${id}`, { method: 'DELETE' }).then(json<{ deleted: boolean }>)
 }

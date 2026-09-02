@@ -199,6 +199,7 @@ async def federation_snapshot(x_multicam_federation: str | None = Header(default
         "backend_id": discovery.backend_id,
         "sessions": [item.model_dump(mode="json") for item in sessions],
         "deleted_session_ids": [str(value) for value in sorted(deleted_session_ids, key=str)],
+        "active_session": store.active_state(),
     }
 
 
@@ -266,13 +267,21 @@ async def federation_sync_loop() -> None:
                             except HTTPException:
                                 pass
                     remote_sessions = [Session.model_validate(raw) for raw in snapshot["sessions"]]
-                    active = next((item for item in remote_sessions if item.state != SessionState.STOPPED), None)
+                    active_state = snapshot.get("active_session")
+                    active_id = UUID(active_state["session_id"]) if active_state else None
+                    active = next((item for item in remote_sessions if item.session_id == active_id), None)
                     peer_active_sessions[snapshot["backend_id"]] = active.model_dump(mode="json") if active else None
                     for remote in remote_sessions:
                         if remote.session_id in deleted_session_ids:
                             continue
                         merged = await store.merge_remote(remote, snapshot["backend_id"], discovery.backend_id)
                         await connections.broadcast(merged.session_id, {"type": "session.updated", "payload": merged.model_dump(mode="json")})
+                    if active_state and active_id:
+                        await store.activate(
+                            active_id, active_state.get("backend_id") or snapshot["backend_id"],
+                            datetime.fromisoformat(active_state["changed_at"]),
+                        )
+                    await sync_completed_takes(peer)
                     federation.mark_sync_ok()
                 except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
                     federation.mark_sync_error(error)
@@ -297,6 +306,14 @@ async def network_interfaces() -> dict:
 @app.post("/api/sessions", response_model=Session, status_code=status.HTTP_201_CREATED)
 async def create_session(data: SessionCreate) -> Session:
     return await store.create(data)
+
+
+@app.post("/api/sessions/{session_id}/activate", response_model=Session)
+async def activate_session(session_id: UUID) -> Session:
+    try:
+        return await store.activate(session_id, discovery.backend_id)
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Session not found") from error
 
 
 async def delete_session_data(session_id: UUID, *, relay: bool) -> None:
