@@ -11,6 +11,12 @@ MULTICAM_HTTPS="${MULTICAM_HTTPS:-1}"
 MULTICAM_CERT="${MULTICAM_CERT:-${PROJECT_DIR}/certs/server.cert.pem}"
 MULTICAM_KEY="${MULTICAM_KEY:-${PROJECT_DIR}/certs/server.key.pem}"
 
+if [[ -n "${MULTICAM_ZEROTIER_NETWORK:-}" ]] && ! command -v zerotier-cli >/dev/null 2>&1; then
+  printf 'Chyba: MULTICAM_ZEROTIER_NETWORK je nastavené, ale ZeroTier není nainstalovaný.\n' >&2
+  printf 'Použijte: sudo ./scripts/setup-zerotier.sh --install %s\n' "${MULTICAM_ZEROTIER_NETWORK}" >&2
+  exit 1
+fi
+
 log() {
   printf '[multicam] %s\n' "$*"
 }

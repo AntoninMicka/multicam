@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -11,6 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .bundle import BundleError, export_session, export_take
+from .discovery import discovery
 from .models import (
     Device,
     CaptureMedia,
@@ -31,7 +33,16 @@ from .uploads import UploadConflictError, UploadNotFoundError, uploads
 from .websocket import connections
 from .vision import VisionRequest, run_vision_job
 
-app = FastAPI(title="MultiCam control server", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await discovery.start()
+    try:
+        yield
+    finally:
+        await discovery.stop()
+
+
+app = FastAPI(title="MultiCam control server", version="0.1.0", lifespan=lifespan)
 active_clap_sequences: set[UUID] = set()
 analysis_tasks: set[asyncio.Task] = set()
 
@@ -60,6 +71,15 @@ app.add_middleware(
 @app.get("/api/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/backends")
+async def list_backends() -> dict:
+    return {
+        "self": {"backend_id": discovery.backend_id, "name": discovery.name, "url": discovery.advertised_url()},
+        "peers": discovery.snapshot(),
+        "discovery_enabled": discovery.enabled,
+    }
 
 
 @app.get("/api/hotspot")

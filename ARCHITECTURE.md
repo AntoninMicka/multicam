@@ -9,6 +9,9 @@
 5. **Synchronizační krok** – určení časového posunu videí podle klapky a uložení korekcí do manifestu.
 6. **Top-down analýza** – reprodukovatelný postprocessing ověřeného videa,
    kalibrace roviny scény a export trajektorií; běží odděleně od capture serveru.
+7. **Discovery backendů** – periodický UDP heartbeat na `239.255.77.77:47777`;
+   funguje v LAN i nad virtuálním rozhraním ZeroTier. Jde pouze o nalezení pultů,
+   relace a úložiště zůstávají vlastnictvím konkrétního backendu.
 
 ## Datový tok
 

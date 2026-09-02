@@ -79,6 +79,42 @@ MULTICAM_WIFI_IFACE=wlan0 MULTICAM_HOTSPOT_SSID=Nataceni MULTICAM_HOTSPOT_PASSWO
 
 Režisérský pult po spuštění zobrazí QR pro připojení k Wi‑Fi a druhý QR s adresou aplikace. Výchozí síť je záměrně bez přístupu k internetu.
 
+### Dva režisérské pulty přes ZeroTier
+
+Každý backend vysílá malý UDP discovery heartbeat a nalezené backendy zveřejní
+na `GET /api/backends`. V jedné LAN není potřeba žádná konfigurace. Pro dva
+notebooky v různých sítích vytvořte privátní ZeroTier síť a na **obou** strojích
+spusťte (16znakové ID nahraďte vlastním):
+
+```bash
+sudo ./scripts/setup-zerotier.sh --install 8056c2e21c000001
+```
+
+Oba nové členy je následně nutné autorizovat v ZeroTier Central. Zjistěte jejich
+ZeroTier IPv4 adresu pomocí `ip -4 addr` a každý backend spusťte například takto:
+
+```bash
+MULTICAM_ZEROTIER_NETWORK=8056c2e21c000001 \
+MULTICAM_BACKEND_NAME="Pult A" \
+MULTICAM_DISCOVERY_INTERFACE_IP=10.147.17.2 \
+MULTICAM_PUBLIC_URL=https://10.147.17.2:8000 \
+MULTICAM_CERT_IPS=10.147.17.2 ./run.sh
+```
+
+Na druhém notebooku použijte jeho adresu a název `Pult B`. Volba
+`MULTICAM_DISCOVERY_INTERFACE_IP` směruje multicast přes ZeroTier místo výchozí
+Wi‑Fi. Pokud je multicast v pravidlech ZeroTier sítě zakázaný, nastavte na obou
+strojích také `MULTICAM_DISCOVERY_PEERS` na ZeroTier IP druhého notebooku;
+discovery pak používá unicast heartbeat. Povolit je potřeba UDP 47777 mezi
+notebooky a TCP 8000 pro web/API. Certifikační autoritě druhého pultu je nutné
+důvěřovat, pokud se jeho web otevírá přímo v prohlížeči.
+
+ZeroTier je volitelná systémová závislost. Setup skript podporuje Debian a
+Ubuntu, kontroluje distribuci, doinstaluje `ca-certificates`, `curl`, `gpg` a
+oficiální balík `zerotier-one`, zapne službu a připojí síť. Bez parametru
+`--install` chybějící instalaci pouze ohlásí. Discovery lze úplně vypnout přes
+`MULTICAM_DISCOVERY=0`.
+
 ### Ruční spuštění
 
 Backend:

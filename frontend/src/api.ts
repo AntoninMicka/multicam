@@ -2,6 +2,19 @@ import type { Device, Session } from './types'
 
 export type DeviceCapabilities = Device['capabilities']
 
+export interface BackendInfo {
+  backend_id: string
+  name: string
+  url: string
+  address?: string
+  last_seen?: number
+  last_seen_seconds_ago?: number
+}
+
+export function getBackends(): Promise<{ self: BackendInfo; peers: BackendInfo[]; discovery_enabled: boolean }> {
+  return fetch('/api/backends').then(json<{ self: BackendInfo; peers: BackendInfo[]; discovery_enabled: boolean }>)
+}
+
 interface UploadStatus {
   upload_id: string
   received_chunks: number[]
