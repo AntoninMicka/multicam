@@ -26,6 +26,8 @@ def isolated_storage(tmp_path) -> None:
     store.root = root
     uploads.root = root
     federation.config_path = tmp_path / "federation.json"
+    federation.token = ""
+    federation.transfer_enabled = True
     deleted_session_ids.clear()
 
 
@@ -62,8 +64,11 @@ def test_pairing_offer_is_one_time_and_persists_config(monkeypatch) -> None:
     monkeypatch.setattr(federation, "token", "")
     offer = asyncio.run(request("POST", "/api/federation/pair/offer"))
     assert offer.status_code == 200
+    assert len(offer.json()["pairing_code"]) == 10
+    assert offer.json()["pairing_code"].isalnum()
     from urllib.parse import parse_qs, urlparse
     code = parse_qs(urlparse(offer.json()["pairing_uri"]).query)["code"][0]
+    assert code == offer.json()["pairing_code"]
     accepted = asyncio.run(request("POST", "/api/federation/pair/accept", json={"code": code}))
     assert len(accepted.json()["token"]) >= 32
     assert federation.config_path.is_file()

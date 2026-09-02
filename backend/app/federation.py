@@ -58,7 +58,9 @@ class Federation:
         if not self.token:
             self.token = secrets.token_urlsafe(32)
         self.save()
-        code = secrets.token_urlsafe(32)
+        # 10 characters from an unambiguous 32-character alphabet = 50 bits.
+        alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+        code = "".join(secrets.choice(alphabet) for _ in range(10))
         self._pairing_codes[code] = time.monotonic() + 300
         return code
 
@@ -81,6 +83,13 @@ class Federation:
                 return json.loads(response.read())
         response = await asyncio.to_thread(exchange)
         self.configure(token=response["token"])
+
+    async def pair_with_discovered_peer(self, code: str) -> None:
+        results = await asyncio.gather(*(
+            self.pair_with(peer["url"], code) for peer in discovery.snapshot()
+        ), return_exceptions=True)
+        if not results or all(isinstance(result, Exception) for result in results):
+            raise ValueError("No discovered backend accepted the pairing code")
 
     def _request(self, url: str, *, data: bytes | None = None, content_type: str = "application/json") -> bytes:
         request = urllib.request.Request(url, data=data, headers={

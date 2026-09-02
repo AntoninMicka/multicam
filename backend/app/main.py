@@ -152,13 +152,21 @@ async def create_pairing_offer(request: Request) -> dict:
     except OSError as error:
         raise HTTPException(status_code=500, detail="Pairing configuration cannot be saved") from error
     query = urlencode({"v": "1", "url": discovery.advertised_url(), "code": code})
-    return {"pairing_uri": f"multicam://federation?{query}", "expires_in_seconds": 300}
+    return {"pairing_uri": f"multicam://federation?{query}", "pairing_code": code, "expires_in_seconds": 300}
 
 
 @app.post("/api/federation/pair")
 async def join_pairing_offer(request: Request) -> dict:
     require_local_operator(request)
-    payload = str((await request.json()).get("pairing_uri", ""))
+    body = await request.json()
+    short_code = str(body.get("pairing_code", "")).replace("-", "").replace(" ", "").upper()
+    if short_code:
+        try:
+            await federation.pair_with_discovered_peer(short_code)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            raise HTTPException(status_code=400, detail="No discovered backend accepted the pairing code") from error
+        return await federation_config()
+    payload = str(body.get("pairing_uri", ""))
     parsed = urlparse(payload)
     values = parse_qs(parsed.query)
     if parsed.scheme != "multicam" or parsed.netloc != "federation" or values.get("v") != ["1"]:

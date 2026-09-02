@@ -12,6 +12,7 @@ const federationEnabled = ref(false)
 const transferEnabled = ref(false)
 const pairingQr = ref('')
 const pairingUri = ref('')
+const pairingCode = ref('')
 const pairingInput = ref('')
 const pairingMessage = ref('')
 const scanInput = ref<HTMLInputElement | null>(null)
@@ -34,6 +35,7 @@ async function createOffer() {
   try {
     const offer = await createPairingOffer()
     pairingUri.value = offer.pairing_uri
+    pairingCode.value = offer.pairing_code
     pairingQr.value = await QRCode.toDataURL(offer.pairing_uri, { margin: 1, width: 280 })
     pairingMessage.value = 'QR platí 5 minut a lze jej použít jen jednou.'
     await refresh()
@@ -107,7 +109,8 @@ onBeforeUnmount(() => window.clearInterval(timer))
         <button v-if="federationEnabled" class="small secondary" @click="toggleTransfer">{{ transferEnabled ? 'Potlačit přenos záznamů' : 'Povolit přenos záznamů' }}</button>
       </div>
       <figure v-if="pairingQr"><img :src="pairingQr" alt="Jednorázový QR pro spárování pultů"><figcaption>Načtěte na druhém pultu</figcaption></figure>
-      <label>QR obsah / párovací kód <textarea v-model="pairingInput" rows="3" placeholder="multicam://federation?…"></textarea></label>
+      <p v-if="pairingCode" class="pairing-code"><small>Párovací kód</small><strong>{{ pairingCode.slice(0, 5) }}-{{ pairingCode.slice(5) }}</strong></p>
+      <label>QR obsah nebo párovací kód <textarea v-model="pairingInput" rows="3" placeholder="Např. ABCDE-FG234 nebo multicam://federation?…"></textarea></label>
       <button class="small" :disabled="!pairingInput.trim()" @click="joinOffer()">Spárovat s prvním pultem</button>
       <small v-if="pairingMessage">{{ pairingMessage }}</small>
     </details>
@@ -123,6 +126,8 @@ onBeforeUnmount(() => window.clearInterval(timer))
 .pairing-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .pairing figure { max-width: 280px; margin: 12px 0; padding: 10px; color: #07101d; text-align: center; background: white; border-radius: 10px; }
 .pairing img { display: block; width: 100%; }
+.pairing-code { display: inline-flex; flex-direction: column; gap: 3px; margin: 8px 0 14px; padding: 10px 16px; border: 1px solid #456; border-radius: 9px; }
+.pairing-code strong { font-size: 1.45rem; letter-spacing: .12em; }
 .pairing label, .pairing textarea { display: block; width: 100%; }
 .pairing textarea { margin: 6px 0 10px; }
 </style>

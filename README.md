@@ -128,6 +128,8 @@ Token není nutné zadávat ručně. Na prvním notebooku otevřete pult přes l
 adresu (`https://localhost:8000`), rozbalte **Spárovat pulty / nastavení
 federace** a zvolte **Vytvořit párovací QR**. Na druhém lokálně otevřeném pultu
 ve stejné sekci QR vyfoťte/načtěte, případně vložte jeho text. Jednorázový kód
+je zobrazený také pod QR ve formátu `XXXXX-XXXXX`; na druhém pultu lze zadat
+jen tento kód a backend automaticky osloví pulty nalezené přes discovery. Kód
 platí pět minut; druhý backend si přes něj převezme token a oba jej uloží do
 `data/federation.json` s oprávněním pouze pro vlastníka. V UI lze také bez
 restartu povolit nebo potlačit následnou replikaci záznamů.

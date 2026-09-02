@@ -34,13 +34,15 @@ export function getFederationConfig(): Promise<FederationConfig> {
   return fetch('/api/federation/config').then(json<FederationConfig>)
 }
 
-export function createPairingOffer(): Promise<{ pairing_uri: string; expires_in_seconds: number }> {
-  return fetch('/api/federation/pair/offer', { method: 'POST' }).then(json<{ pairing_uri: string; expires_in_seconds: number }>)
+export function createPairingOffer(): Promise<{ pairing_uri: string; pairing_code: string; expires_in_seconds: number }> {
+  return fetch('/api/federation/pair/offer', { method: 'POST' }).then(json<{ pairing_uri: string; pairing_code: string; expires_in_seconds: number }>)
 }
 
-export function joinPairingOffer(pairingUri: string): Promise<FederationConfig> {
+export function joinPairingOffer(value: string): Promise<FederationConfig> {
+  const isUri = value.trim().startsWith('multicam://')
   return fetch('/api/federation/pair', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pairing_uri: pairingUri }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(isUri ? { pairing_uri: value } : { pairing_code: value }),
   }).then(json<FederationConfig>)
 }
 
