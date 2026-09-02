@@ -78,6 +78,10 @@ MULTICAM_WIFI_IFACE=wlan0 MULTICAM_HOTSPOT_SSID=Nataceni MULTICAM_HOTSPOT_PASSWO
 ```
 
 Režisérský pult po spuštění zobrazí QR pro připojení k Wi‑Fi a druhý QR s adresou aplikace. Výchozí síť je záměrně bez přístupu k internetu.
+Pouze v režisérském pohledu je navíc panel **QR frontendu podle rozhraní**.
+Backend v něm vypíše všechny aktivní ne-loopback IPv4 a IPv6 adresy (typicky
+Ethernet, Wi‑Fi, hotspot a ZeroTier) a pro každou vytvoří samostatný QR odkaz na
+frontend. Po připojení nového rozhraní lze seznam obnovit bez restartu serveru.
 
 ### Dva režisérské pulty přes ZeroTier
 

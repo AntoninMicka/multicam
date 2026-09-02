@@ -184,6 +184,17 @@ export function getHotspotStatus(): Promise<HotspotStatus> {
   return fetch('/api/hotspot').then(json<HotspotStatus>)
 }
 
+export interface NetworkInterfaceAddress {
+  interface: string
+  family: 'ipv4' | 'ipv6'
+  address: string
+  url: string
+}
+
+export function getNetworkInterfaces(): Promise<{ interfaces: NetworkInterfaceAddress[] }> {
+  return fetch('/api/network-interfaces').then(json<{ interfaces: NetworkInterfaceAddress[] }>)
+}
+
 export function registerDevice(
   sessionId: string,
   name: string,

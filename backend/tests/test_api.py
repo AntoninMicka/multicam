@@ -43,6 +43,16 @@ def test_hotspot_status(tmp_path, monkeypatch) -> None:
     assert response.json()["ssid"] == "MultiCam"
 
 
+def test_network_interfaces_are_exposed_for_frontend_qr(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.interface_addresses", lambda: [{
+        "interface": "ztabc123", "family": "ipv4", "address": "10.10.0.2",
+        "url": "https://10.10.0.2:8000/",
+    }])
+    response = asyncio.run(request("GET", "/api/network-interfaces"))
+    assert response.status_code == 200
+    assert response.json()["interfaces"][0]["interface"] == "ztabc123"
+
+
 def test_federation_control_requires_token_and_applies_immediately(monkeypatch) -> None:
     monkeypatch.setattr(federation, "token", "shared-secret")
     session = asyncio.run(request("POST", "/api/sessions", json={"name": "Federated"})).json()

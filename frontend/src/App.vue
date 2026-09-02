@@ -19,6 +19,7 @@ import CaptureGroup from './CaptureGroup.vue'
 import ArchivePage from './ArchivePage.vue'
 import HotspotPanel from './HotspotPanel.vue'
 import BackendPeers from './BackendPeers.vue'
+import InterfaceQrPanel from './InterfaceQrPanel.vue'
 import {
   appendRecordingChunk,
   appendTelemetryEvent,
@@ -912,6 +913,7 @@ onBeforeUnmount(() => {
       <template v-if="role === 'director'">
         <HotspotPanel />
         <BackendPeers @join-session="joinFederatedSession" />
+        <InterfaceQrPanel />
         <button class="archive-button secondary" @click="archiveOpen = true">Archiv všech záznamů</button>
         <div v-if="availableSessions.length" class="session-list">
           <h2>Relace</h2>
@@ -949,6 +951,7 @@ onBeforeUnmount(() => {
         <button class="archive-button secondary" @click="archiveOpen = true">Archiv všech záznamů</button>
         <HotspotPanel />
         <BackendPeers @join-session="joinFederatedSession" />
+        <InterfaceQrPanel />
         <h3>Zařízení ({{ devices.length }})</h3>
         <button class="preview-toggle secondary" :disabled="!connectedDevices.length || session.state === 'recording'" @click="toggleLivePreview">{{ livePreviewEnabled ? 'Vypnout živé náhledy' : 'Zapnout živé náhledy' }}</button>
         <div class="record-controls">

@@ -33,6 +33,7 @@ from .models import (
     UploadStatus,
 )
 from .mosaic import MosaicError, render_mosaic
+from .network import interface_addresses
 from .store import SessionNotFoundError, store
 from .uploads import UploadConflictError, UploadNotFoundError, uploads
 from .websocket import connections
@@ -281,6 +282,11 @@ async def hotspot_status() -> dict:
         return json.loads(status_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {"active": False}
+
+
+@app.get("/api/network-interfaces")
+async def network_interfaces() -> dict:
+    return {"interfaces": interface_addresses()}
 
 
 @app.post("/api/sessions", response_model=Session, status_code=status.HTTP_201_CREATED)
