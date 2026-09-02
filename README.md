@@ -124,6 +124,14 @@ lokálního pultu. Relace lze odstranit ze seznamu; po potvrzení se smažou jej
 manifesty, záznamy a odvozené soubory na obou dostupných federovaných pultech.
 Běžící relaci backend smazat odmítne.
 
+Token není nutné zadávat ručně. Na prvním notebooku otevřete pult přes lokální
+adresu (`https://localhost:8000`), rozbalte **Spárovat pulty / nastavení
+federace** a zvolte **Vytvořit párovací QR**. Na druhém lokálně otevřeném pultu
+ve stejné sekci QR vyfoťte/načtěte, případně vložte jeho text. Jednorázový kód
+platí pět minut; druhý backend si přes něj převezme token a oba jej uloží do
+`data/federation.json` s oprávněním pouze pro vlastníka. V UI lze také bez
+restartu povolit nebo potlačit následnou replikaci záznamů.
+
 Přenos velkých souborů mezi pulty lze vypnout, aniž se vypne okamžité řízení:
 
 ```bash

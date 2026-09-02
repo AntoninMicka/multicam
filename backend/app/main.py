@@ -1,8 +1,10 @@
 import asyncio
 import hmac
+import hashlib
 import json
 import os
 import tempfile
+from urllib.parse import parse_qs, urlencode, urlparse
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -112,6 +114,69 @@ async def list_backends() -> dict:
 def require_federation_token(value: str | None) -> None:
     if not federation.enabled or not value or not hmac.compare_digest(value, federation.token):
         raise HTTPException(status_code=401, detail="Invalid federation token")
+
+
+def require_local_operator(request: Request) -> None:
+    if not request.client or request.client.host not in {"127.0.0.1", "::1", "testclient"}:
+        raise HTTPException(status_code=403, detail="Pairing can only be configured from this notebook")
+
+
+@app.get("/api/federation/config")
+async def federation_config() -> dict:
+    return {
+        "enabled": federation.enabled,
+        "transfer_enabled": federation.transfer_enabled,
+        "token_fingerprint": hashlib.sha256(federation.token.encode()).hexdigest()[:12] if federation.token else None,
+    }
+
+
+@app.patch("/api/federation/config")
+async def update_federation_config(request: Request) -> dict:
+    require_local_operator(request)
+    data = await request.json()
+    try:
+        federation.configure(
+            token=data.get("token"),
+            transfer_enabled=data.get("transfer_enabled"),
+        )
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return await federation_config()
+
+
+@app.post("/api/federation/pair/offer")
+async def create_pairing_offer(request: Request) -> dict:
+    require_local_operator(request)
+    try:
+        code = federation.create_pairing_offer()
+    except OSError as error:
+        raise HTTPException(status_code=500, detail="Pairing configuration cannot be saved") from error
+    query = urlencode({"v": "1", "url": discovery.advertised_url(), "code": code})
+    return {"pairing_uri": f"multicam://federation?{query}", "expires_in_seconds": 300}
+
+
+@app.post("/api/federation/pair")
+async def join_pairing_offer(request: Request) -> dict:
+    require_local_operator(request)
+    payload = str((await request.json()).get("pairing_uri", ""))
+    parsed = urlparse(payload)
+    values = parse_qs(parsed.query)
+    if parsed.scheme != "multicam" or parsed.netloc != "federation" or values.get("v") != ["1"]:
+        raise HTTPException(status_code=400, detail="Invalid MultiCam pairing QR")
+    try:
+        await federation.pair_with(values["url"][0], values["code"][0])
+    except (KeyError, OSError, ValueError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=400, detail="Pairing failed or the code expired") from error
+    return await federation_config()
+
+
+@app.post("/api/federation/pair/accept")
+async def accept_pairing_offer(request: Request) -> dict:
+    try:
+        token = federation.accept_pairing(str((await request.json()).get("code", "")))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"token": token}
 
 
 @app.get("/api/federation/snapshot")

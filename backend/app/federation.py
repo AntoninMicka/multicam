@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 import ssl
 import urllib.request
 from pathlib import Path
@@ -15,8 +16,15 @@ from .discovery import discovery
 
 class Federation:
     def __init__(self) -> None:
-        self.token = os.getenv("MULTICAM_FEDERATION_TOKEN", "")
-        self.transfer_enabled = os.getenv("MULTICAM_FEDERATION_TRANSFER", "1") != "0"
+        self.config_path = Path(os.getenv("MULTICAM_FEDERATION_CONFIG", "data/federation.json"))
+        try:
+            saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            saved = {}
+        self.token = os.getenv("MULTICAM_FEDERATION_TOKEN", saved.get("token", ""))
+        configured_transfer = os.getenv("MULTICAM_FEDERATION_TRANSFER")
+        self.transfer_enabled = configured_transfer != "0" if configured_transfer is not None else saved.get("transfer_enabled", True)
+        self._pairing_codes: dict[str, float] = {}
 
     @property
     def enabled(self) -> bool:
@@ -28,6 +36,51 @@ class Federation:
         if os.getenv("MULTICAM_FEDERATION_TLS_VERIFY", "1") == "0":
             return ssl._create_unverified_context()  # noqa: SLF001 - explicit operator choice
         return ssl.create_default_context()
+
+    def save(self) -> None:
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.config_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"token": self.token, "transfer_enabled": self.transfer_enabled}), encoding="utf-8")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, self.config_path)
+
+    def configure(self, *, token: str | None = None, transfer_enabled: bool | None = None) -> None:
+        if token is not None:
+            if len(token) < 32:
+                raise ValueError("Federation token must have at least 32 characters")
+            self.token = token
+        if transfer_enabled is not None:
+            self.transfer_enabled = transfer_enabled
+        self.save()
+
+    def create_pairing_offer(self) -> str:
+        import time
+        if not self.token:
+            self.token = secrets.token_urlsafe(32)
+        self.save()
+        code = secrets.token_urlsafe(32)
+        self._pairing_codes[code] = time.monotonic() + 300
+        return code
+
+    def accept_pairing(self, code: str) -> str:
+        import time
+        expires = self._pairing_codes.pop(code, 0)
+        if expires < time.monotonic():
+            raise ValueError("Pairing code is invalid or expired")
+        return self.token
+
+    async def pair_with(self, url: str, code: str) -> None:
+        data = json.dumps({"code": code}).encode()
+        request = urllib.request.Request(
+            f"{url.rstrip('/')}/api/federation/pair/accept", data=data,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        context = ssl._create_unverified_context() if url.startswith("https://") else None  # noqa: SLF001
+        def exchange() -> dict:
+            with urllib.request.urlopen(request, timeout=10, context=context) as response:
+                return json.loads(response.read())
+        response = await asyncio.to_thread(exchange)
+        self.configure(token=response["token"])
 
     def _request(self, url: str, *, data: bytes | None = None, content_type: str = "application/json") -> bytes:
         request = urllib.request.Request(url, data=data, headers={

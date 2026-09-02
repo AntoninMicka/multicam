@@ -20,8 +20,34 @@ export interface BackendStatus {
   transfer_enabled: boolean
 }
 
+export interface FederationConfig {
+  enabled: boolean
+  transfer_enabled: boolean
+  token_fingerprint: string | null
+}
+
 export function getBackends(): Promise<BackendStatus> {
   return fetch('/api/backends').then(json<BackendStatus>)
+}
+
+export function getFederationConfig(): Promise<FederationConfig> {
+  return fetch('/api/federation/config').then(json<FederationConfig>)
+}
+
+export function createPairingOffer(): Promise<{ pairing_uri: string; expires_in_seconds: number }> {
+  return fetch('/api/federation/pair/offer', { method: 'POST' }).then(json<{ pairing_uri: string; expires_in_seconds: number }>)
+}
+
+export function joinPairingOffer(pairingUri: string): Promise<FederationConfig> {
+  return fetch('/api/federation/pair', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pairing_uri: pairingUri }),
+  }).then(json<FederationConfig>)
+}
+
+export function setFederationTransfer(transferEnabled: boolean): Promise<FederationConfig> {
+  return fetch('/api/federation/config', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transfer_enabled: transferEnabled }),
+  }).then(json<FederationConfig>)
 }
 
 interface UploadStatus {

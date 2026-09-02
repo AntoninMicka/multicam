@@ -25,6 +25,7 @@ def isolated_storage(tmp_path) -> None:
     store._sessions.clear()
     store.root = root
     uploads.root = root
+    federation.config_path = tmp_path / "federation.json"
     deleted_session_ids.clear()
 
 
@@ -55,6 +56,18 @@ def test_federation_control_requires_token_and_applies_immediately(monkeypatch) 
     assert accepted.status_code == 200
     current = asyncio.run(request("GET", f"/api/sessions/{session['session_id']}"))
     assert current.json()["state"] == "armed"
+
+
+def test_pairing_offer_is_one_time_and_persists_config(monkeypatch) -> None:
+    monkeypatch.setattr(federation, "token", "")
+    offer = asyncio.run(request("POST", "/api/federation/pair/offer"))
+    assert offer.status_code == 200
+    from urllib.parse import parse_qs, urlparse
+    code = parse_qs(urlparse(offer.json()["pairing_uri"]).query)["code"][0]
+    accepted = asyncio.run(request("POST", "/api/federation/pair/accept", json={"code": code}))
+    assert len(accepted.json()["token"]) >= 32
+    assert federation.config_path.is_file()
+    assert asyncio.run(request("POST", "/api/federation/pair/accept", json={"code": code})).status_code == 400
 
 
 def test_create_session_and_register_device() -> None:
