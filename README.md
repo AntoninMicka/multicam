@@ -137,6 +137,10 @@ jen tento kód a backend automaticky osloví pulty nalezené přes discovery. K�
 platí pět minut; druhý backend si přes něj převezme token a oba jej uloží do
 `data/federation.json` s oprávněním pouze pro vlastníka. V UI lze také bez
 restartu povolit nebo potlačit následnou replikaci záznamů.
+Protože každý pult standardně používá vlastní lokální CA, QR handshake současně
+uloží režim TLS pro toto spojení; autentizaci dalších požadavků zajišťuje
+sdílený náhodný token uvnitř privátní ZeroTier sítě. UI zobrazuje čas poslední
+úspěšné synchronizace a případnou síťovou/TLS chybu.
 
 Přenos velkých souborů mezi pulty lze vypnout, aniž se vypne okamžité řízení:
 

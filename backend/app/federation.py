@@ -8,6 +8,7 @@ import os
 import secrets
 import ssl
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,18 @@ class Federation:
         self.token = os.getenv("MULTICAM_FEDERATION_TOKEN", saved.get("token", ""))
         configured_transfer = os.getenv("MULTICAM_FEDERATION_TRANSFER")
         self.transfer_enabled = configured_transfer != "0" if configured_transfer is not None else saved.get("transfer_enabled", True)
+        configured_verify = os.getenv("MULTICAM_FEDERATION_TLS_VERIFY")
+        if configured_verify is not None:
+            self.tls_verify = configured_verify != "0"
+        elif "tls_verify" in saved:
+            self.tls_verify = bool(saved["tls_verify"])
+        else:
+            # Configs created by the earlier QR handshake already authenticated
+            # the peer but did not persist this flag; migrate them automatically.
+            self.tls_verify = not bool(saved.get("token"))
         self._pairing_codes: dict[str, float] = {}
+        self.last_sync_at: str | None = None
+        self.last_error: str | None = None
 
     @property
     def enabled(self) -> bool:
@@ -33,14 +45,16 @@ class Federation:
     def _ssl_context(self) -> ssl.SSLContext:
         if ca := os.getenv("MULTICAM_FEDERATION_CA"):
             return ssl.create_default_context(cafile=ca)
-        if os.getenv("MULTICAM_FEDERATION_TLS_VERIFY", "1") == "0":
+        if not self.tls_verify:
             return ssl._create_unverified_context()  # noqa: SLF001 - explicit operator choice
         return ssl.create_default_context()
 
     def save(self) -> None:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.config_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"token": self.token, "transfer_enabled": self.transfer_enabled}), encoding="utf-8")
+        temporary.write_text(json.dumps({
+            "token": self.token, "transfer_enabled": self.transfer_enabled, "tls_verify": self.tls_verify,
+        }), encoding="utf-8")
         os.chmod(temporary, 0o600)
         os.replace(temporary, self.config_path)
 
@@ -69,10 +83,12 @@ class Federation:
         expires = self._pairing_codes.pop(code, 0)
         if expires < time.monotonic():
             raise ValueError("Pairing code is invalid or expired")
+        self.tls_verify = False
+        self.save()
         return self.token
 
     async def pair_with(self, url: str, code: str) -> None:
-        data = json.dumps({"code": code}).encode()
+        data = json.dumps({"code": code, "peer_url": discovery.advertised_url()}).encode()
         request = urllib.request.Request(
             f"{url.rstrip('/')}/api/federation/pair/accept", data=data,
             headers={"Content-Type": "application/json"}, method="POST",
@@ -82,7 +98,15 @@ class Federation:
             with urllib.request.urlopen(request, timeout=10, context=context) as response:
                 return json.loads(response.read())
         response = await asyncio.to_thread(exchange)
+        self.tls_verify = False
         self.configure(token=response["token"])
+
+    def mark_sync_ok(self) -> None:
+        self.last_sync_at = datetime.now(timezone.utc).isoformat()
+        self.last_error = None
+
+    def mark_sync_error(self, error: Exception) -> None:
+        self.last_error = str(error) or error.__class__.__name__
 
     async def pair_with_discovered_peer(self, code: str) -> None:
         results = await asyncio.gather(*(

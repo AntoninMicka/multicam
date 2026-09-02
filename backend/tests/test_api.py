@@ -28,6 +28,7 @@ def isolated_storage(tmp_path) -> None:
     federation.config_path = tmp_path / "federation.json"
     federation.token = ""
     federation.transfer_enabled = True
+    federation.tls_verify = True
     deleted_session_ids.clear()
 
 
@@ -81,6 +82,7 @@ def test_pairing_offer_is_one_time_and_persists_config(monkeypatch) -> None:
     assert code == offer.json()["pairing_code"]
     accepted = asyncio.run(request("POST", "/api/federation/pair/accept", json={"code": code}))
     assert len(accepted.json()["token"]) >= 32
+    assert federation.tls_verify is False
     assert federation.config_path.is_file()
     assert asyncio.run(request("POST", "/api/federation/pair/accept", json={"code": code})).status_code == 400
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import QRCode from 'qrcode'
-import { createPairingOffer, getBackends, joinPairingOffer, setFederationTransfer, type BackendInfo } from './api'
+import { createPairingOffer, getBackends, getFederationConfig, joinPairingOffer, setFederationTransfer, type BackendInfo } from './api'
 
 const emit = defineEmits<{ (event: 'join-session', sessionId: string): void }>()
 
@@ -16,6 +16,8 @@ const pairingCode = ref('')
 const pairingInput = ref('')
 const pairingMessage = ref('')
 const scanInput = ref<HTMLInputElement | null>(null)
+const lastSyncAt = ref<string | null>(null)
+const syncError = ref<string | null>(null)
 let timer = 0
 
 async function refresh() {
@@ -25,6 +27,9 @@ async function refresh() {
     peers.value = result.peers
     federationEnabled.value = result.federation_enabled
     transferEnabled.value = result.transfer_enabled
+    const config = await getFederationConfig()
+    lastSyncAt.value = config.last_sync_at
+    syncError.value = config.last_error
     error.value = ''
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Discovery backendů není dostupné.'
@@ -91,7 +96,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
 
 <template>
   <div class="backend-peers">
-    <div><strong>Backend: {{ own?.name ?? 'načítám…' }}</strong><small v-if="own">{{ own.url }}</small><small v-if="federationEnabled">Federace aktivní · přenos záznamů {{ transferEnabled ? 'zapnutý' : 'potlačený' }}</small><small v-else>Jen discovery · federace není nakonfigurovaná</small></div>
+    <div><strong>Backend: {{ own?.name ?? 'načítám…' }}</strong><small v-if="own">{{ own.url }}</small><small v-if="federationEnabled">Federace aktivní · přenos záznamů {{ transferEnabled ? 'zapnutý' : 'potlačený' }}</small><small v-else>Jen discovery · federace není nakonfigurovaná</small><small v-if="lastSyncAt">Poslední synchronizace: {{ new Date(lastSyncAt).toLocaleTimeString() }}</small><small v-if="syncError" class="sync-error">Synchronizace selhala: {{ syncError }}</small></div>
     <span v-if="error" class="muted">{{ error }}</span>
     <span v-else-if="!peers.length" class="muted">Další pult nenalezen</span>
     <a v-for="peer in peers" :key="peer.backend_id" :href="peer.url" target="_blank" rel="noopener">
@@ -130,4 +135,5 @@ onBeforeUnmount(() => window.clearInterval(timer))
 .pairing-code strong { font-size: 1.45rem; letter-spacing: .12em; }
 .pairing label, .pairing textarea { display: block; width: 100%; }
 .pairing textarea { margin: 6px 0 10px; }
+.sync-error { color: #fca5a5; }
 </style>

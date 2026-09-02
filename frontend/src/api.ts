@@ -24,6 +24,9 @@ export interface FederationConfig {
   enabled: boolean
   transfer_enabled: boolean
   token_fingerprint: string | null
+  tls_verify: boolean
+  last_sync_at: string | null
+  last_error: string | null
 }
 
 export function getBackends(): Promise<BackendStatus> {

@@ -128,6 +128,9 @@ async def federation_config() -> dict:
         "enabled": federation.enabled,
         "transfer_enabled": federation.transfer_enabled,
         "token_fingerprint": hashlib.sha256(federation.token.encode()).hexdigest()[:12] if federation.token else None,
+        "tls_verify": federation.tls_verify,
+        "last_sync_at": federation.last_sync_at,
+        "last_error": federation.last_error,
     }
 
 
@@ -270,7 +273,9 @@ async def federation_sync_loop() -> None:
                             continue
                         merged = await store.merge_remote(remote, snapshot["backend_id"], discovery.backend_id)
                         await connections.broadcast(merged.session_id, {"type": "session.updated", "payload": merged.model_dump(mode="json")})
-                except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                    federation.mark_sync_ok()
+                except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+                    federation.mark_sync_error(error)
                     continue
         await asyncio.sleep(2)
 
