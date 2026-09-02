@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.bundle import BundleError, export_session, export_take, import_session
+from app.bundle import BundleError, export_session, export_take, import_session, import_take
 
 
 def test_bundle_round_trip_and_excludes_reconstructible_files(tmp_path: Path) -> None:
@@ -79,3 +79,14 @@ def test_take_bundle_contains_only_selected_capture(tmp_path: Path) -> None:
     assert not any(str(other_capture) in name for name in names)
     with pytest.raises(BundleError, match="cannot be imported"):
         import_session(tmp_path / "target", bundle)
+
+    target = tmp_path / "peer"
+    target_session = target / str(session_id)
+    target_session.mkdir(parents=True)
+    (target_session / "session.json").write_text(json.dumps({"session_id": str(session_id)}))
+    assert import_take(target, bundle, session_id, take_id) >= 1
+    replicated = list(target_session.rglob(f"{selected_capture}.webm"))
+    assert len(replicated) == 1
+    assert replicated[0].read_bytes() == b"selected"
+    # Receiving the same immutable take twice is idempotent.
+    assert import_take(target, bundle, session_id, take_id) == 0

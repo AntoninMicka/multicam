@@ -98,7 +98,9 @@ MULTICAM_ZEROTIER_NETWORK=8056c2e21c000001 \
 MULTICAM_BACKEND_NAME="Pult A" \
 MULTICAM_DISCOVERY_INTERFACE_IP=10.147.17.2 \
 MULTICAM_PUBLIC_URL=https://10.147.17.2:8000 \
-MULTICAM_CERT_IPS=10.147.17.2 ./run.sh
+MULTICAM_CERT_IPS=10.147.17.2 \
+MULTICAM_FEDERATION_TOKEN="stejny-dlouhy-nahodny-token-na-obou-pultech" \
+MULTICAM_FEDERATION_TLS_VERIFY=0 ./run.sh
 ```
 
 Na druhém notebooku použijte jeho adresu a název `Pult B`. Volba
@@ -108,6 +110,25 @@ strojích také `MULTICAM_DISCOVERY_PEERS` na ZeroTier IP druhého notebooku;
 discovery pak používá unicast heartbeat. Povolit je potřeba UDP 47777 mezi
 notebooky a TCP 8000 pro web/API. Certifikační autoritě druhého pultu je nutné
 důvěřovat, pokud se jeho web otevírá přímo v prohlížeči.
+
+Se stejnou hodnotou `MULTICAM_FEDERATION_TOKEN` fungují oba backendy jako jeden
+pult: relace a seznam připojených kamer se slučují, `ARM`, `START` a `STOP` se
+předají druhému backendu ihned a oba použijí stejné `take_id`. Telefon vždy
+odesílá video jen svému lokálnímu notebooku. Teprve až tento notebook ověří
+video i telemetrii všech svých telefonů, odešle kontrolovaně zabalenou lokální
+část klapky druhému notebooku. Import kontroluje velikosti a SHA-256 a je
+idempotentní.
+
+Přenos velkých souborů mezi pulty lze vypnout, aniž se vypne okamžité řízení:
+
+```bash
+MULTICAM_FEDERATION_TRANSFER=0
+```
+
+Ukázka používá `MULTICAM_FEDERATION_TLS_VERIFY=0`, protože každý notebook má
+ve výchozím stavu vlastní lokální CA; provoz je stále omezen sdíleným tokenem a
+privátní ZeroTier sítí. Bezpečnější varianta je importovat CA druhého pultu a
+nastavit její cestu v `MULTICAM_FEDERATION_CA` místo vypnutí ověřování TLS.
 
 ZeroTier je volitelná systémová závislost. Setup skript podporuje Debian a
 Ubuntu, kontroluje distribuci, doinstaluje `ca-certificates`, `curl`, `gpg` a

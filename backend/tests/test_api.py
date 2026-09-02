@@ -8,6 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+from app.federation import federation
 from app.store import SessionStore, store
 from app.uploads import UploadService, uploads
 
@@ -35,6 +36,23 @@ def test_hotspot_status(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("MULTICAM_HOTSPOT_STATUS", str(status_path))
     response = asyncio.run(request("GET", "/api/hotspot"))
     assert response.json()["ssid"] == "MultiCam"
+
+
+def test_federation_control_requires_token_and_applies_immediately(monkeypatch) -> None:
+    monkeypatch.setattr(federation, "token", "shared-secret")
+    session = asyncio.run(request("POST", "/api/sessions", json={"name": "Federated"})).json()
+    payload = {
+        "session_id": session["session_id"],
+        "message": {"type": "control.arm", "payload": {"command_id": "cmd-1"}},
+    }
+    assert asyncio.run(request("POST", "/api/federation/control", json=payload)).status_code == 401
+    accepted = asyncio.run(request(
+        "POST", "/api/federation/control", json=payload,
+        headers={"X-MultiCam-Federation": "shared-secret"},
+    ))
+    assert accepted.status_code == 200
+    current = asyncio.run(request("GET", f"/api/sessions/{session['session_id']}"))
+    assert current.json()["state"] == "armed"
 
 
 def test_create_session_and_register_device() -> None:

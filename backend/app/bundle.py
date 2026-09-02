@@ -190,6 +190,66 @@ def import_session(data_dir: Path, source: Path) -> UUID:
     return session_id
 
 
+def import_take(data_dir: Path, source: Path, expected_session_id: UUID, expected_take_id: UUID) -> int:
+    """Verify and merge a replicated take without replacing existing local data."""
+    data_dir = data_dir.resolve()
+    destination = data_dir / str(expected_session_id)
+    if not (destination / "session.json").is_file():
+        raise BundleError("The shared session does not exist on this backend yet")
+    with zipfile.ZipFile(source, "r") as archive:
+        try:
+            manifest = json.loads(archive.read(MANIFEST_NAME))
+        except (KeyError, json.JSONDecodeError) as error:
+            raise BundleError("Bundle manifest is missing or invalid") from error
+        if manifest.get("bundle_version") != BUNDLE_VERSION or manifest.get("scope") != "take":
+            raise BundleError("Expected a take bundle")
+        if manifest.get("session_id") != str(expected_session_id) or manifest.get("take_id") != str(expected_take_id):
+            raise BundleError("Bundle identifiers do not match the request")
+        expected = {item["path"]: item for item in manifest.get("files", [])}
+        archive_names = {name.removeprefix("session/") for name in archive.namelist() if name.startswith("session/") and not name.endswith("/")}
+        if archive_names != set(expected):
+            raise BundleError("Bundle file list does not match its manifest")
+        # Global files differ legitimately on each backend. Device artifacts are
+        # immutable and can therefore be merged safely by checksum.
+        ignored = {"session.json", "events.jsonl", "analysis.json", "report.json"}
+        staging = Path(tempfile.mkdtemp(prefix=".federation-take-", dir=data_dir))
+        imported = 0
+        try:
+            # Validate every member and every existing-file conflict before the
+            # destination is changed.
+            for relative, metadata in expected.items():
+                member = _safe_member(f"session/{relative}")
+                digest = hashlib.sha256()
+                size = 0
+                temporary = staging.joinpath(*PurePosixPath(relative).parts)
+                temporary.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(str(member)) as bundled, temporary.open("wb") as output:
+                    for chunk in iter(lambda: bundled.read(1024 * 1024), b""):
+                        output.write(chunk)
+                        digest.update(chunk)
+                        size += len(chunk)
+                if size != metadata["size_bytes"] or digest.hexdigest() != metadata["sha256"]:
+                    raise BundleError(f"Checksum mismatch: {relative}")
+                if relative in ignored:
+                    continue
+                target = destination.joinpath(*PurePosixPath(relative).parts)
+                if target.exists():
+                    if target.stat().st_size != size or _sha256(target) != digest.hexdigest():
+                        raise BundleError(f"Conflicting replicated file: {relative}")
+            for relative in expected:
+                if relative in ignored:
+                    continue
+                temporary = staging.joinpath(*PurePosixPath(relative).parts)
+                target = destination.joinpath(*PurePosixPath(relative).parts)
+                if not target.exists():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(temporary, target)
+                    imported += 1
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+    return imported
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export or import a MultiCam session bundle")
     parser.add_argument("--data-dir", type=Path, default=Path("data/sessions"))

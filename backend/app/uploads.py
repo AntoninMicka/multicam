@@ -312,9 +312,11 @@ class UploadService:
             events = [json.loads(line) for line in event_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
         except (OSError, ValueError):
             events = []
+        local_backend_id = os.environ.get("MULTICAM_BACKEND_ID_RUNTIME")
         expected_devices = {
             str(device.device_id): {"name": device.name, "role": device.role.value}
             for device in session.devices.values()
+            if not local_backend_id or not device.owner_backend_id or device.owner_backend_id == local_backend_id
         }
         takes: dict[str, dict] = {}
         for media in self.list_media(session):

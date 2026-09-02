@@ -5,6 +5,8 @@ import { getBackends, type BackendInfo } from './api'
 const peers = ref<BackendInfo[]>([])
 const own = ref<BackendInfo | null>(null)
 const error = ref('')
+const federationEnabled = ref(false)
+const transferEnabled = ref(false)
 let timer = 0
 
 async function refresh() {
@@ -12,6 +14,8 @@ async function refresh() {
     const result = await getBackends()
     own.value = result.self
     peers.value = result.peers
+    federationEnabled.value = result.federation_enabled
+    transferEnabled.value = result.transfer_enabled
     error.value = ''
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Discovery backendů není dostupné.'
@@ -27,7 +31,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
 
 <template>
   <div class="backend-peers">
-    <div><strong>Backend: {{ own?.name ?? 'načítám…' }}</strong><small v-if="own">{{ own.url }}</small></div>
+    <div><strong>Backend: {{ own?.name ?? 'načítám…' }}</strong><small v-if="own">{{ own.url }}</small><small v-if="federationEnabled">Federace aktivní · přenos záznamů {{ transferEnabled ? 'zapnutý' : 'potlačený' }}</small><small v-else>Jen discovery · federace není nakonfigurovaná</small></div>
     <span v-if="error" class="muted">{{ error }}</span>
     <span v-else-if="!peers.length" class="muted">Další pult nenalezen</span>
     <a v-for="peer in peers" :key="peer.backend_id" :href="peer.url" target="_blank" rel="noopener">

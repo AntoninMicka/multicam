@@ -11,8 +11,16 @@ export interface BackendInfo {
   last_seen_seconds_ago?: number
 }
 
-export function getBackends(): Promise<{ self: BackendInfo; peers: BackendInfo[]; discovery_enabled: boolean }> {
-  return fetch('/api/backends').then(json<{ self: BackendInfo; peers: BackendInfo[]; discovery_enabled: boolean }>)
+export interface BackendStatus {
+  self: BackendInfo
+  peers: BackendInfo[]
+  discovery_enabled: boolean
+  federation_enabled: boolean
+  transfer_enabled: boolean
+}
+
+export function getBackends(): Promise<BackendStatus> {
+  return fetch('/api/backends').then(json<BackendStatus>)
 }
 
 interface UploadStatus {

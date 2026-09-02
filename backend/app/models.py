@@ -47,6 +47,7 @@ class Device(BaseModel):
     capabilities: DeviceCapabilities = Field(default_factory=DeviceCapabilities)
     connected: bool = True
     last_seen_at: datetime = Field(default_factory=utc_now)
+    owner_backend_id: str | None = None
 
 
 class DeviceRegistration(BaseModel):

@@ -1,6 +1,8 @@
 import asyncio
+import hmac
 import json
 import os
+import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,8 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .bundle import BundleError, export_session, export_take
+from .bundle import BundleError, export_session, export_take, import_take
 from .discovery import discovery
+from .federation import federation
 from .models import (
     Device,
     CaptureMedia,
@@ -35,16 +38,21 @@ from .vision import VisionRequest, run_vision_job
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    os.environ["MULTICAM_BACKEND_ID_RUNTIME"] = discovery.backend_id
     await discovery.start()
+    sync_task = asyncio.create_task(federation_sync_loop())
     try:
         yield
     finally:
+        sync_task.cancel()
+        await asyncio.gather(sync_task, return_exceptions=True)
         await discovery.stop()
 
 
 app = FastAPI(title="MultiCam control server", version="0.1.0", lifespan=lifespan)
 active_clap_sequences: set[UUID] = set()
 analysis_tasks: set[asyncio.Task] = set()
+federation_tasks: set[asyncio.Task] = set()
 
 
 def clap_sequence_steps(session: Session) -> list[tuple[str, Device | None]]:
@@ -79,7 +87,76 @@ async def list_backends() -> dict:
         "self": {"backend_id": discovery.backend_id, "name": discovery.name, "url": discovery.advertised_url()},
         "peers": discovery.snapshot(),
         "discovery_enabled": discovery.enabled,
+        "federation_enabled": federation.enabled,
+        "transfer_enabled": federation.transfer_enabled,
     }
+
+
+def require_federation_token(value: str | None) -> None:
+    if not federation.enabled or not value or not hmac.compare_digest(value, federation.token):
+        raise HTTPException(status_code=401, detail="Invalid federation token")
+
+
+@app.get("/api/federation/snapshot")
+async def federation_snapshot(x_multicam_federation: str | None = Header(default=None)) -> dict:
+    require_federation_token(x_multicam_federation)
+    return {"backend_id": discovery.backend_id, "sessions": [item.model_dump(mode="json") for item in await store.list()]}
+
+
+@app.post("/api/federation/control")
+async def federation_control(request: Request, x_multicam_federation: str | None = Header(default=None)) -> dict:
+    require_federation_token(x_multicam_federation)
+    data = await request.json()
+    await apply_control(UUID(data["session_id"]), SocketMessage.model_validate(data["message"]), relay=False)
+    return {"accepted": True}
+
+
+@app.post("/api/federation/event")
+async def federation_event(request: Request, x_multicam_federation: str | None = Header(default=None)) -> dict:
+    require_federation_token(x_multicam_federation)
+    data = await request.json()
+    await connections.broadcast(UUID(data["session_id"]), SocketMessage.model_validate(data["message"]).model_dump(mode="json"))
+    return {"accepted": True}
+
+
+@app.post("/api/federation/take")
+async def federation_take(
+    request: Request,
+    session_id: UUID,
+    take_id: UUID,
+    source_backend_id: str,
+    x_multicam_federation: str | None = Header(default=None),
+) -> dict:
+    require_federation_token(x_multicam_federation)
+    if not federation.transfer_enabled:
+        raise HTTPException(status_code=403, detail="Federation data transfer is disabled")
+    descriptor, temporary_name = tempfile.mkstemp(prefix="multicam-federation-", suffix=".zip")
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        with temporary.open("wb") as output:
+            async for chunk in request.stream():
+                output.write(chunk)
+        imported = await asyncio.to_thread(import_take, uploads.root, temporary, session_id, take_id)
+    except BundleError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {"imported_files": imported, "source_backend_id": source_backend_id}
+
+
+async def federation_sync_loop() -> None:
+    while True:
+        if federation.enabled:
+            for peer in discovery.snapshot():
+                try:
+                    snapshot = await federation.get_snapshot(peer["url"])
+                    for raw in snapshot["sessions"]:
+                        merged = await store.merge_remote(Session.model_validate(raw), snapshot["backend_id"], discovery.backend_id)
+                        await connections.broadcast(merged.session_id, {"type": "session.updated", "payload": merged.model_dump(mode="json")})
+                except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                    continue
+        await asyncio.sleep(2)
 
 
 @app.get("/api/hotspot")
@@ -120,7 +197,7 @@ async def get_session(session_id: UUID) -> Session:
 @app.post("/api/sessions/{session_id}/devices", response_model=Device, status_code=status.HTTP_201_CREATED)
 async def register_device(session_id: UUID, data: DeviceRegistration) -> Device:
     try:
-        device = await store.register_device(session_id, data)
+        device = await store.register_device(session_id, data, discovery.backend_id)
     except SessionNotFoundError as error:
         raise HTTPException(status_code=404, detail="Session not found") from error
     await connections.broadcast(session_id, {"type": "session.updated", "payload": (await store.get(session_id)).model_dump(mode="json")})
@@ -206,7 +283,35 @@ async def complete_upload(session_id: UUID, device_id: UUID, upload_id: UUID) ->
     next_state = DeviceState.VERIFIED if uploads.capture_verified(session_id, device_id, receipt.capture_id) else DeviceState.UPLOADING
     updated = await store.set_device_state(session_id, device_id, next_state)
     await connections.broadcast(session_id, {"type": "session.updated", "payload": updated.model_dump(mode="json")})
+    if next_state == DeviceState.VERIFIED and federation.enabled and federation.transfer_enabled:
+        media = next((item for item in uploads.list_media(updated) if item.capture_id == receipt.capture_id), None)
+        if media:
+            task = asyncio.create_task(replicate_completed_take(session_id, media.take_id or media.capture_id))
+            federation_tasks.add(task)
+            task.add_done_callback(federation_tasks.discard)
     return receipt
+
+
+async def replicate_completed_take(session_id: UUID, take_id: UUID) -> None:
+    session = await store.get(session_id)
+    report = uploads.build_report(session)
+    take = next((item for item in report["takes"] if item["take_id"] == str(take_id)), None)
+    if not take or not take["complete"]:
+        return
+    local_ids = {
+        media.capture_id for media in uploads.list_media(session)
+        if (media.take_id or media.capture_id) == take_id
+        and (not session.devices[str(media.device_id)].owner_backend_id
+             or session.devices[str(media.device_id)].owner_backend_id == discovery.backend_id)
+    }
+    if not local_ids:
+        return
+    destination = uploads.root / ".federation" / f"{session_id}-{take_id}-{discovery.backend_id}.zip"
+    await asyncio.to_thread(export_take, uploads.root, session_id, take_id, local_ids, destination)
+    await asyncio.gather(*(
+        federation.send_bundle(peer["url"], destination, str(session_id), str(take_id))
+        for peer in discovery.snapshot()
+    ), return_exceptions=True)
 
 
 @app.get("/api/sessions/{session_id}/media", response_model=list[CaptureMedia])
@@ -385,6 +490,36 @@ async def get_recording_telemetry(session_id: UUID, device_id: UUID, capture_id:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+async def apply_control(session_id: UUID, message: SocketMessage, *, relay: bool) -> None:
+    current = await store.get(session_id)
+    local_devices = [
+        device for device in current.devices.values()
+        if not device.owner_backend_id or device.owner_backend_id == discovery.backend_id
+    ]
+    if message.type == "control.arm":
+        session = await store.set_state(session_id, SessionState.ARMED)
+    elif message.type == "recording.start":
+        unready = [device.name for device in local_devices if device.connected and device.state != DeviceState.ARMED]
+        if unready:
+            raise HTTPException(status_code=409, detail=f"Kamery bez ARM: {', '.join(unready)}")
+        message.payload.setdefault("take_id", str(uuid4()))
+        session = await store.set_state(session_id, SessionState.RECORDING)
+    elif message.type == "recording.stop":
+        session = await store.set_state(session_id, SessionState.STOPPED)
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported federation control")
+    await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
+    await connections.broadcast(session_id, message.model_dump(mode="json"))
+    if relay:
+        task = asyncio.create_task(federation.broadcast_json("/api/federation/control", {
+            "session_id": str(session_id), "message": message.model_dump(mode="json"),
+        }))
+        federation_tasks.add(task)
+        task.add_done_callback(federation_tasks.discard)
+    if message.type == "recording.start":
+        asyncio.create_task(trigger_delayed_clap(session_id))
+
+
 @app.websocket("/api/ws/{session_id}")
 async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID | None = None) -> None:
     try:
@@ -411,30 +546,21 @@ async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID
             if message.type == "clap.sequence.request":
                 asyncio.create_task(run_clap_sequence(session_id, automatic=False))
                 continue
+            if message.type in {"control.arm", "recording.start", "recording.stop"}:
+                try:
+                    await apply_control(session_id, message, relay=True)
+                except HTTPException as control_error:
+                    await websocket.send_json({
+                        "type": "control.rejected",
+                        "payload": {"command_id": message.payload.get("command_id"), "detail": control_error.detail},
+                    })
+                continue
             if message.type == "clock.report" and device_id is not None:
                 message.payload["device_id"] = str(device_id)
             elif message.type == "upload.client_status" and device_id is not None:
                 message.payload["device_id"] = str(device_id)
             elif message.type == "preview.frame" and device_id is not None:
                 message.payload["device_id"] = str(device_id)
-            elif message.type == "control.arm":
-                session = await store.set_state(session_id, SessionState.ARMED)
-                await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
-            elif message.type == "recording.start":
-                current = await store.get(session_id)
-                unready = [device.name for device in current.devices.values() if device.connected and device.state != DeviceState.ARMED]
-                if unready:
-                    await websocket.send_json({
-                        "type": "control.rejected",
-                        "payload": {"command_id": message.payload.get("command_id"), "detail": f"Kamery bez ARM: {', '.join(unready)}"},
-                    })
-                    continue
-                message.payload["take_id"] = str(uuid4())
-                session = await store.set_state(session_id, SessionState.RECORDING)
-                await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
-            elif message.type == "recording.stop":
-                session = await store.set_state(session_id, SessionState.STOPPED)
-                await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
             elif message.type == "control.ack" and device_id is not None:
                 ack_state = {
                     "ready": DeviceState.ARMED,
@@ -447,8 +573,12 @@ async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID
                     message.payload["device_id"] = str(device_id)
                     await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
             await connections.broadcast(session_id, message.model_dump(mode="json"))
-            if message.type == "recording.start":
-                asyncio.create_task(trigger_delayed_clap(session_id))
+            if message.type == "control.ack":
+                task = asyncio.create_task(federation.broadcast_json("/api/federation/event", {
+                    "session_id": str(session_id), "message": message.model_dump(mode="json"),
+                }))
+                federation_tasks.add(task)
+                task.add_done_callback(federation_tasks.discard)
     except WebSocketDisconnect:
         connections.disconnect(session_id, websocket)
         if device_id is not None:

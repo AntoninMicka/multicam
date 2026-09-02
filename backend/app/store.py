@@ -103,7 +103,7 @@ class SessionStore:
                 raise SessionNotFoundError(session_id)
             return session.model_copy(deep=True)
 
-    async def register_device(self, session_id: UUID, data: DeviceRegistration) -> Device:
+    async def register_device(self, session_id: UUID, data: DeviceRegistration, owner_backend_id: str | None = None) -> Device:
         async with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
@@ -113,10 +113,29 @@ class SessionStore:
                 name=data.name,
                 role=data.role,
                 capabilities=data.capabilities,
+                owner_backend_id=owner_backend_id,
             )
             session.devices[str(device.device_id)] = device
             self._persist(session)
             return device.model_copy(deep=True)
+
+    async def merge_remote(self, remote: Session, remote_backend_id: str, local_backend_id: str) -> Session:
+        """Merge only the devices owned by a remote backend into a shared session."""
+        async with self._lock:
+            session = self._sessions.get(remote.session_id)
+            if session is None:
+                session = remote.model_copy(deep=True)
+                session.devices = {}
+                self._sessions[session.session_id] = session
+            for key, device in remote.devices.items():
+                owner = device.owner_backend_id or remote_backend_id
+                if owner == remote_backend_id:
+                    device.owner_backend_id = owner
+                    session.devices[key] = device.model_copy(deep=True)
+            # A remote snapshot must never overwrite local state.
+            session.state = remote.state
+            self._persist(session)
+            return session.model_copy(deep=True)
 
     async def set_connected(self, session_id: UUID, device_id: UUID, connected: bool) -> None:
         async with self._lock:
