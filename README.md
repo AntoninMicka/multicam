@@ -200,6 +200,14 @@ Ubuntu, kontroluje distribuci, doinstaluje `ca-certificates`, `curl`, `gpg` a
 oficiální balík `zerotier-one`, zapne službu a připojí síť. Bez parametru
 `--install` chybějící instalaci pouze ohlásí. Discovery lze úplně vypnout přes
 `MULTICAM_DISCOVERY=0`.
+V režisérském UI je sbalený panel **ZeroTier**, který ukazuje stav služby, node
+ID, verzi, připojené sítě, virtuální rozhraní a přidělené adresy. Lze v něm
+zadat 16znakové Network ID a síť připojit; pokud balík chybí, nabídne rovnou
+instalaci. Při samotné instalaci je Network ID volitelné a síť lze připojit
+později; pokud je vyplněné, instalace a připojení proběhnou v jednom kroku.
+Privilegovaná část používá pouze `pkexec` s pevně validovaným Network
+ID a existujícím setup skriptem, nikoli obecný shell. Operace je povolená jen z
+lokálně otevřeného režisérského pultu.
 
 ### Ruční spuštění
 

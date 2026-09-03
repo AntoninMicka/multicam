@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import time
+import subprocess
 from urllib.parse import parse_qs, urlencode, urlparse
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -39,6 +40,7 @@ from .store import SessionNotFoundError, store
 from .uploads import UploadConflictError, UploadNotFoundError, uploads
 from .websocket import connections
 from .vision import VisionRequest, run_vision_job
+from .zerotier import ZeroTierError, join as join_zerotier, status as zerotier_status
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -404,6 +406,27 @@ async def hotspot_status() -> dict:
 @app.get("/api/network-interfaces")
 async def network_interfaces() -> dict:
     return {"interfaces": interface_addresses()}
+
+
+@app.get("/api/zerotier")
+async def get_zerotier_status() -> dict:
+    try:
+        return zerotier_status()
+    except (OSError, ZeroTierError) as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.post("/api/zerotier/join")
+async def join_zerotier_network(request: Request) -> dict:
+    require_local_operator(request)
+    data = await request.json()
+    try:
+        return join_zerotier(
+            str(data.get("network_id", "")), Path(__file__).resolve().parents[2],
+            bool(data.get("install", False)),
+        )
+    except (OSError, subprocess.SubprocessError, ZeroTierError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.post("/api/sessions", response_model=Session, status_code=status.HTTP_201_CREATED)

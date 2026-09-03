@@ -63,6 +63,22 @@ def test_network_interfaces_are_exposed_for_frontend_qr(monkeypatch) -> None:
     assert response.json()["interfaces"][0]["interface"] == "ztabc123"
 
 
+def test_zerotier_status_and_join_are_available_to_local_director(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.zerotier_status", lambda: {
+        "installed": True, "online": True, "node_id": "abcdef1234", "networks": [],
+    })
+    monkeypatch.setattr("app.main.join_zerotier", lambda network_id, project_dir, install: {
+        "accepted": True, "network_id": network_id, "detail": "OK",
+    })
+    status_response = asyncio.run(request("GET", "/api/zerotier"))
+    assert status_response.json()["online"] is True
+    joined = asyncio.run(request("POST", "/api/zerotier/join", json={
+        "network_id": "8056c2e21c000001", "install": False,
+    }))
+    assert joined.status_code == 200
+    assert joined.json()["accepted"] is True
+
+
 def test_federation_control_requires_token_and_applies_immediately(monkeypatch) -> None:
     monkeypatch.setattr(federation, "token", "shared-secret")
     session = asyncio.run(request("POST", "/api/sessions", json={"name": "Federated"})).json()

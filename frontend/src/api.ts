@@ -224,6 +224,33 @@ export function getNetworkInterfaces(): Promise<{ interfaces: NetworkInterfaceAd
   return fetch('/api/network-interfaces').then(json<{ interfaces: NetworkInterfaceAddress[] }>)
 }
 
+export interface ZeroTierStatus {
+  installed: boolean
+  online: boolean
+  node_id?: string
+  version?: string
+  detail?: string | null
+  networks: Array<{
+    id: string
+    name: string
+    status: string
+    type?: string
+    interface?: string
+    addresses: string[]
+  }>
+}
+
+export function getZeroTierStatus(): Promise<ZeroTierStatus> {
+  return fetch('/api/zerotier').then(json<ZeroTierStatus>)
+}
+
+export function joinZeroTier(networkId: string, install: boolean): Promise<{ accepted: boolean; detail: string }> {
+  return fetch('/api/zerotier/join', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ network_id: networkId, install }),
+  }).then(json<{ accepted: boolean; detail: string }>)
+}
+
 export function registerDevice(
   sessionId: string,
   name: string,

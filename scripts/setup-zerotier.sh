@@ -2,14 +2,16 @@
 set -Eeuo pipefail
 
 usage() {
-  printf 'Použití: sudo %s [--install] NETWORK_ID\n' "${0##*/}"
-  printf 'Připojí tento Debian/Ubuntu notebook k existující ZeroTier síti.\n'
+  printf 'Použití: sudo %s --install [NETWORK_ID]\n' "${0##*/}"
+  printf '         sudo %s NETWORK_ID\n' "${0##*/}"
+  printf 'Nainstaluje ZeroTier a volitelně připojí existující síť.\n'
 }
 
 install=0
 if [[ "${1:-}" == "--install" ]]; then install=1; shift; fi
 network_id="${1:-}"
-if [[ ! "${network_id}" =~ ^[0-9a-fA-F]{16}$ ]]; then usage >&2; exit 2; fi
+if [[ -z "${network_id}" && ${install} -ne 1 ]]; then usage >&2; exit 2; fi
+if [[ -n "${network_id}" && ! "${network_id}" =~ ^[0-9a-fA-F]{16}$ ]]; then usage >&2; exit 2; fi
 if [[ ${EUID} -ne 0 ]]; then printf 'Chyba: spusťte skript přes sudo.\n' >&2; exit 1; fi
 if [[ ! -r /etc/os-release ]]; then printf 'Chyba: nelze určit distribuci.\n' >&2; exit 1; fi
 # shellcheck disable=SC1091
@@ -33,7 +35,11 @@ if ! command -v zerotier-cli >/dev/null 2>&1; then
 fi
 
 systemctl enable --now zerotier-one
-zerotier-cli join "${network_id,,}"
-printf '\nZeroTier čeká na autorizaci člena v ZeroTier Central. Stav:\n'
+if [[ -n "${network_id}" ]]; then
+  zerotier-cli join "${network_id,,}"
+  printf '\nZeroTier čeká na autorizaci člena v ZeroTier Central. Stav:\n'
+fi
 zerotier-cli listnetworks
-printf '\nPo autorizaci spusťte MultiCam s MULTICAM_PUBLIC_URL=https://ZEROTIER_IP:8000 ./run.sh\n'
+if [[ -n "${network_id}" ]]; then
+  printf '\nPo autorizaci spusťte MultiCam s MULTICAM_PUBLIC_URL=https://ZEROTIER_IP:8000 ./run.sh\n'
+fi
