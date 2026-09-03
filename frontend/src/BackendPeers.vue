@@ -114,7 +114,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
     <span v-if="error" class="muted">{{ error }}</span>
     <span v-else-if="!peers.length" class="muted">{{ discoveryDetail || 'Další pult nenalezen' }}</span>
     <button class="small secondary" :disabled="pingBusy" @click="runApplicationPing">{{ pingBusy ? 'Testuji…' : 'Aplikační ping' }}</button>
-    <small v-for="result in pingResults" :key="result.url" :class="result.ok ? 'ping-ok' : 'sync-error'">{{ result.url }} · {{ result.ok ? `${result.latency_ms} ms` : result.detail }}</small>
+    <small v-for="result in pingResults" :key="result.url" :class="result.ok ? 'ping-ok' : 'sync-error'">{{ result.ok ? `Pult ${result.url} odpovídá za ${result.latency_ms} ms` : `Pult ${result.url} není dosažitelný: ${result.detail}` }}</small>
     <a v-for="peer in peers" :key="peer.backend_id" :href="peer.url" target="_blank" rel="noopener">
       {{ peer.name }} · {{ (peer.last_seen_seconds_ago ?? 0).toFixed(1) }} s
     </a>

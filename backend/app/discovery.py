@@ -109,7 +109,12 @@ class BackendDiscovery:
                 self.last_rejection = "jiná verze discovery protokolu"
                 return
             if peer_id == self.backend_id:
-                self.last_rejection = "druhý pult používá stejné backend ID"
+                local_addresses = {
+                    item["address"] for item in interface_addresses()
+                    if item["family"] == "ipv4"
+                }
+                if address not in local_addresses:
+                    self.last_rejection = "jiný pult používá stejné backend ID"
                 return
             name, url = str(message["name"]), str(message["url"])
             pairing_code = message.get("pairing_code")

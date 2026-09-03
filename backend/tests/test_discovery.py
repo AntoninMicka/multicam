@@ -61,3 +61,19 @@ def test_discovery_routes_pairing_code_without_exposing_it_in_snapshot(monkeypat
     }).encode(), "10.10.0.2")
     assert "pairing_code" not in service.snapshot()[0]
     assert service.peers_with_pairing_code("23456ABCDE")[0]["url"] == "https://10.10.0.2:8000"
+
+
+def test_own_multicast_loopback_is_not_reported_as_id_collision(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("MULTICAM_BACKEND_ID_FILE", str(tmp_path / "id"))
+    service = BackendDiscovery()
+    monkeypatch.setattr("app.discovery.interface_addresses", lambda: [{
+        "interface": "ztabc", "family": "ipv4", "address": "10.10.0.1",
+    }])
+    payload = json.dumps({
+        "protocol": PROTOCOL, "backend_id": service.backend_id,
+        "name": "self", "url": "https://10.10.0.1:8000",
+    }).encode()
+    service.receive(payload, "10.10.0.1")
+    assert service.diagnostics()["last_rejection"] is None
+    service.receive(payload, "10.10.0.2")
+    assert service.diagnostics()["last_rejection"] == "jiný pult používá stejné backend ID"
