@@ -55,6 +55,16 @@ async function createOffer() {
   }
 }
 
+async function copyPairingLink() {
+  if (!pairingUri.value) return
+  try {
+    await navigator.clipboard.writeText(pairingUri.value)
+    pairingMessage.value = 'Celý párovací odkaz je zkopírovaný. Vložte jej na druhém pultu.'
+  } catch {
+    pairingMessage.value = 'Automatické kopírování není povolené. Označte a zkopírujte odkaz níže.'
+  }
+}
+
 async function joinOffer(value = pairingInput.value) {
   try {
     await joinPairingOffer(value.trim())
@@ -130,10 +140,15 @@ onBeforeUnmount(() => window.clearInterval(timer))
         <button v-if="federationRole === 'leader'" class="small secondary" @click="toggleBackup">{{ backupToFollower ? 'Vypnout zálohu na follower' : 'Zapnout zálohu na follower' }}</button>
       </div>
       <figure v-if="pairingQr"><img :src="pairingQr" alt="Jednorázový QR pro spárování pultů"><figcaption>Načtěte na druhém pultu</figcaption></figure>
+      <div v-if="pairingUri" class="pairing-link">
+        <button class="small secondary" @click="copyPairingLink">Zkopírovat párovací odkaz</button>
+        <code>{{ pairingUri }}</code>
+      </div>
       <p v-if="pairingCode" class="pairing-code"><small>Párovací kód</small><strong>{{ pairingCode.slice(0, 5) }}-{{ pairingCode.slice(5) }}</strong></p>
-      <label>QR obsah nebo párovací kód <textarea v-model="pairingInput" rows="3" placeholder="Např. ABCDE-FG234 nebo multicam://federation?…"></textarea></label>
+      <label>Celý párovací odkaz (doporučeno) nebo krátký kód <textarea v-model="pairingInput" rows="3" placeholder="multicam://federation?…"></textarea></label>
       <button class="small" :disabled="!pairingInput.trim()" @click="joinOffer()">Spárovat s prvním pultem</button>
       <small v-if="pairingMessage">{{ pairingMessage }}</small>
+      <small>Celý odkaz se připojí přímo a nepotřebuje discovery. Krátký kód funguje pouze tehdy, když se pulty už navzájem našly.</small>
     </details>
   </div>
 </template>
@@ -149,6 +164,8 @@ onBeforeUnmount(() => window.clearInterval(timer))
 .pairing img { display: block; width: 100%; }
 .pairing-code { display: inline-flex; flex-direction: column; gap: 3px; margin: 8px 0 14px; padding: 10px 16px; border: 1px solid #456; border-radius: 9px; }
 .pairing-code strong { font-size: 1.45rem; letter-spacing: .12em; }
+.pairing-link { display: grid !important; justify-items: start; gap: 8px; width: 100%; margin: 8px 0 14px; }
+.pairing-link code { max-width: 100%; padding: 8px; overflow-wrap: anywhere; user-select: all; }
 .pairing label, .pairing textarea { display: block; width: 100%; }
 .pairing textarea { margin: 6px 0 10px; }
 .sync-error { color: #fca5a5; }

@@ -202,7 +202,13 @@ async def join_pairing_offer(request: Request) -> dict:
         try:
             await federation.pair_with_discovered_peer(short_code)
         except (OSError, ValueError, json.JSONDecodeError) as error:
-            raise HTTPException(status_code=400, detail="No discovered backend accepted the pairing code") from error
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Samotný kód funguje jen mezi již nalezenými pulty. "
+                    "Zkopírujte z leadera celý párovací odkaz multicam://federation?…"
+                ),
+            ) from error
         return await federation_config()
     payload = str(body.get("pairing_uri", ""))
     parsed = urlparse(payload)
