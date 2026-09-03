@@ -41,11 +41,13 @@ onMounted(refresh)
     </div>
     <template v-else>
       <p class="network"><strong>{{ status.ssid }}</strong><code>{{ status.password }}</code><small>{{ status.interface }} · bez internetu</small></p>
-      <div class="qr-grid">
-        <figure><img :src="wifiQr" alt="QR pro připojení k Wi-Fi"><figcaption>1. Připojit k Wi‑Fi</figcaption></figure>
-        <figure><img :src="appQr" alt="QR adresy MultiCam"><figcaption>2. Otevřít MultiCam</figcaption></figure>
-      </div>
-      <p class="address">{{ status.app_url }}</p>
+      <details class="hotspot-qr"><summary>Zobrazit QR pro připojení kamer</summary>
+        <div class="qr-grid">
+          <figure><img :src="wifiQr" alt="QR pro připojení k Wi-Fi"><figcaption>1. Připojit k Wi‑Fi</figcaption></figure>
+          <figure><img :src="appQr" alt="QR adresy MultiCam"><figcaption>2. Otevřít MultiCam</figcaption></figure>
+        </div>
+        <p class="address">{{ status.app_url }}</p>
+      </details>
     </template>
   </section>
 </template>
@@ -59,6 +61,7 @@ code { padding: 3px 6px; border-radius: 5px; background: #050a12; }
 .network { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .network small { margin-left: auto; }
 .qr-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.hotspot-qr summary { margin: 12px 0; cursor: pointer; font-weight: 700; }
 figure { margin: 0; padding: 10px; color: #07101d; text-align: center; border-radius: 12px; background: white; }
 img { display: block; width: 100%; }
 figcaption { padding: 7px 0 2px; font-size: .78rem; font-weight: 800; }

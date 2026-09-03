@@ -82,6 +82,9 @@ Pouze v režisérském pohledu je navíc panel **QR frontendu podle rozhraní**.
 Backend v něm vypíše všechny aktivní ne-loopback IPv4 a IPv6 adresy (typicky
 Ethernet, Wi‑Fi, hotspot a ZeroTier) a pro každou vytvoří samostatný QR odkaz na
 frontend. Po připojení nového rozhraní lze seznam obnovit bez restartu serveru.
+QR panely jsou ve výchozím stavu sbalené. Na telefonu/tabletu úvodní obrazovka
+nabízí pouze hlavní, top-down a vedlejší kameru; na desktopu pouze režisérský
+pult.
 
 ### Dva režisérské pulty přes ZeroTier
 
@@ -130,6 +133,9 @@ followeru (včetně povelu z hlavní kamery) procházejí přes leader. V celé
 federaci smí být právě jedna hlavní a jedna top-down kamera, nezávisle na tom,
 ke kterému notebooku jsou připojené. Živé náhledy se mezi backendy neposílají a
 zůstávají jen na pultu příslušného telefonu.
+Follower při párování a následně při každém reconnectu registruje u leadera
+svou dosažitelnou adresu. Řídicí povely proto nejsou závislé na obousměrném
+multicast discovery přes ZeroTier.
 
 Po ověření lokálních uploadů posílá follower svou část klapky leaderu s trvalým
 retry stavem. Opačný směr je vypnutý, dokud leader v UI nezapne **Zálohu na

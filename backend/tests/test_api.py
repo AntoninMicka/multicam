@@ -36,6 +36,7 @@ def isolated_storage(tmp_path) -> None:
     federation.leader_url = None
     federation.leader_backend_id = None
     federation.backup_to_follower = False
+    federation.followers = {}
     deleted_session_ids.clear()
 
 
@@ -88,11 +89,17 @@ def test_pairing_offer_is_one_time_and_persists_config(monkeypatch) -> None:
     from urllib.parse import parse_qs, urlparse
     code = parse_qs(urlparse(offer.json()["pairing_uri"]).query)["code"][0]
     assert code == offer.json()["pairing_code"]
-    accepted = asyncio.run(request("POST", "/api/federation/pair/accept", json={"code": code}))
+    peer_id = "11111111-1111-4111-8111-111111111111"
+    accepted = asyncio.run(request("POST", "/api/federation/pair/accept", json={
+        "code": code, "peer_backend_id": peer_id, "peer_url": "https://10.10.0.2:8000",
+    }))
     assert len(accepted.json()["token"]) >= 32
     assert federation.tls_verify is False
+    assert federation.followers[peer_id] == "https://10.10.0.2:8000"
     assert federation.config_path.is_file()
-    assert asyncio.run(request("POST", "/api/federation/pair/accept", json={"code": code})).status_code == 400
+    assert asyncio.run(request("POST", "/api/federation/pair/accept", json={
+        "code": code, "peer_backend_id": peer_id, "peer_url": "https://10.10.0.2:8000",
+    })).status_code == 400
 
 
 def test_create_session_and_register_device() -> None:

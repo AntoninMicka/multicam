@@ -42,6 +42,8 @@ const VIDEO_PROFILES: Record<VideoProfileId, { label: string; description: strin
   quality: { label: 'Vysoce kvalitní (4K)', description: '3840×2160 · 30 FPS · maximální nároky', width: 3840, height: 2160, fps: 30, mimeTypes: ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'] },
 }
 const role = ref<Role | null>(null)
+const isMobileDevice = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+  || (/Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1)
 const archiveOpen = ref(false)
 const session = ref<Session | null>(null)
 const sessionName = ref('Zkušební relace')
@@ -909,10 +911,15 @@ onBeforeUnmount(() => {
 
     <section v-if="!role" class="card role-picker">
       <h2>Jak chcete zařízení použít?</h2>
-      <button @click="chooseRole('director')">Režisérský pult</button>
-      <button class="secondary" @click="chooseRole('main_camera')">Hlavní kamera</button>
-      <button class="secondary" @click="chooseRole('top_camera')">Top-over kamera</button>
-      <button class="secondary" @click="chooseRole('secondary_camera')">Vedlejší kamera</button>
+      <template v-if="isMobileDevice">
+        <button @click="chooseRole('main_camera')">Hlavní kamera</button>
+        <button class="secondary" @click="chooseRole('top_camera')">Top-down kamera</button>
+        <button class="secondary" @click="chooseRole('secondary_camera')">Vedlejší kamera</button>
+      </template>
+      <template v-else>
+        <button @click="chooseRole('director')">Režisérský pult</button>
+        <p class="muted">Na desktopu je dostupný režisérský pult; kamerové role se nabízejí na telefonu nebo tabletu.</p>
+      </template>
     </section>
 
     <ArchivePage v-else-if="role === 'director' && archiveOpen" @close="archiveOpen = false" />

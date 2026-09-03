@@ -26,6 +26,7 @@ class Federation:
         self.role = os.getenv("MULTICAM_FEDERATION_ROLE", saved.get("role", "standalone"))
         self.leader_url = os.getenv("MULTICAM_FEDERATION_LEADER_URL", saved.get("leader_url"))
         self.leader_backend_id = saved.get("leader_backend_id")
+        self.followers: dict[str, str] = saved.get("followers", {}) if isinstance(saved.get("followers", {}), dict) else {}
         self.backup_to_follower = os.getenv("MULTICAM_FEDERATION_BACKUP", "1" if saved.get("backup_to_follower") else "0") == "1"
         configured_transfer = os.getenv("MULTICAM_FEDERATION_TRANSFER")
         self.transfer_enabled = configured_transfer != "0" if configured_transfer is not None else saved.get("transfer_enabled", True)
@@ -61,6 +62,7 @@ class Federation:
             "role": self.role, "leader_url": self.leader_url,
             "leader_backend_id": self.leader_backend_id,
             "backup_to_follower": self.backup_to_follower,
+            "followers": self.followers,
         }), encoding="utf-8")
         os.chmod(temporary, 0o600)
         os.replace(temporary, self.config_path)
@@ -103,7 +105,10 @@ class Federation:
         return self.token
 
     async def pair_with(self, url: str, code: str) -> None:
-        data = json.dumps({"code": code, "peer_url": discovery.advertised_url()}).encode()
+        data = json.dumps({
+            "code": code, "peer_url": discovery.advertised_url(),
+            "peer_backend_id": discovery.backend_id,
+        }).encode()
         request = urllib.request.Request(
             f"{url.rstrip('/')}/api/federation/pair/accept", data=data,
             headers={"Content-Type": "application/json"}, method="POST",
@@ -140,7 +145,22 @@ class Federation:
             if not matched and self.leader_url:
                 return [{"backend_id": self.leader_backend_id, "url": self.leader_url, "name": "leader"}]
             return matched
-        return peers
+        by_id = {peer["backend_id"]: peer for peer in peers}
+        if self.role == "leader":
+            for backend_id, url in self.followers.items():
+                by_id.setdefault(backend_id, {"backend_id": backend_id, "url": url, "name": "follower"})
+        return list(by_id.values())
+
+    def register_follower(self, backend_id: str, url: str) -> None:
+        if self.role != "leader" or not url.startswith(("http://", "https://")):
+            raise ValueError("Follower registration is not valid on this backend")
+        self.followers[backend_id] = url.rstrip("/")
+        self.save()
+
+    async def announce_to_leader(self) -> None:
+        await self.send_to_leader("/api/federation/register-follower", {
+            "backend_id": discovery.backend_id, "url": discovery.advertised_url(),
+        })
 
     def _request(self, url: str, *, data: bytes | None = None, content_type: str = "application/json") -> bytes:
         request = urllib.request.Request(url, data=data, headers={
@@ -157,8 +177,17 @@ class Federation:
         await asyncio.to_thread(self._request, f"{peer_url}{path}", data=data)
 
     async def broadcast_json(self, path: str, payload: dict) -> None:
-        if self.enabled:
-            await asyncio.gather(*(self.post_json(peer["url"], path, payload) for peer in self.target_peers()), return_exceptions=True)
+        if not self.enabled:
+            return
+        peers = self.target_peers()
+        if not peers:
+            error = ValueError("No federated peer is registered")
+            self.mark_sync_error(error)
+            return
+        results = await asyncio.gather(*(self.post_json(peer["url"], path, payload) for peer in peers), return_exceptions=True)
+        failures = [result for result in results if isinstance(result, Exception)]
+        if len(failures) == len(results):
+            self.mark_sync_error(failures[0])
 
     async def send_to_leader(self, path: str, payload: dict) -> None:
         if not self.enabled or self.role != "follower" or not self.leader_url:

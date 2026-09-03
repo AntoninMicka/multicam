@@ -189,14 +189,27 @@ async def join_pairing_offer(request: Request) -> dict:
 
 @app.post("/api/federation/pair/accept")
 async def accept_pairing_offer(request: Request) -> dict:
+    data = await request.json()
     try:
-        token = federation.accept_pairing(str((await request.json()).get("code", "")))
-    except ValueError as error:
+        token = federation.accept_pairing(str(data.get("code", "")))
+        federation.register_follower(str(UUID(data["peer_backend_id"])), str(data["peer_url"]))
+    except (KeyError, ValueError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return {
         "token": token, "leader_backend_id": discovery.backend_id,
         "leader_url": discovery.advertised_url(),
     }
+
+
+@app.post("/api/federation/register-follower")
+async def register_follower(request: Request, x_multicam_federation: str | None = Header(default=None)) -> dict:
+    require_federation_token(x_multicam_federation)
+    data = await request.json()
+    try:
+        federation.register_follower(str(UUID(data["backend_id"])), str(data["url"]))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"registered": True}
 
 
 @app.get("/api/federation/snapshot")
@@ -301,6 +314,11 @@ async def federation_take(
 async def federation_sync_loop() -> None:
     while True:
         if federation.enabled:
+            if federation.role == "follower":
+                try:
+                    await federation.announce_to_leader()
+                except (OSError, ValueError) as error:
+                    federation.mark_sync_error(error)
             for peer in federation.target_peers():
                 try:
                     snapshot = await federation.get_snapshot(peer["url"])
