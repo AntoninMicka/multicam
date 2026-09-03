@@ -26,6 +26,7 @@ class Peer:
     url: str
     address: str
     last_seen: float
+    pairing_code: str | None = None
 
 
 class _Protocol(asyncio.DatagramProtocol):
@@ -50,6 +51,8 @@ class BackendDiscovery:
         self.transport: asyncio.DatagramTransport | None = None
         self.task: asyncio.Task | None = None
         self.multicast_interface_ips: list[str] = []
+        self.pairing_code: str | None = None
+        self.pairing_expires_at: float = 0
 
     def _current_multicast_ips(self) -> list[str]:
         if self.interface_ip != "0.0.0.0":
@@ -96,6 +99,11 @@ class BackendDiscovery:
             if message.get("protocol") != PROTOCOL or peer_id == self.backend_id:
                 return
             name, url = str(message["name"]), str(message["url"])
+            pairing_code = message.get("pairing_code")
+            if pairing_code is not None:
+                pairing_code = str(pairing_code)
+                if len(pairing_code) != 10 or not pairing_code.isalnum():
+                    pairing_code = None
             if not name or not url.startswith(("http://", "https://")):
                 return
             # The address observed on the UDP packet is routable on the exact
@@ -108,12 +116,27 @@ class BackendDiscovery:
             url = urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, "")).rstrip("/")
         except (KeyError, TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
             return
-        self.peers[peer_id] = Peer(peer_id, name[:80], url, address, time.monotonic())
+        self.peers[peer_id] = Peer(peer_id, name[:80], url, address, time.monotonic(), pairing_code)
 
     def snapshot(self) -> list[dict]:
         now = time.monotonic()
         self.peers = {key: peer for key, peer in self.peers.items() if now - peer.last_seen <= self.ttl}
-        return [{**asdict(peer), "last_seen_seconds_ago": round(now - peer.last_seen, 1)} for peer in self.peers.values()]
+        return [{
+            **{key: value for key, value in asdict(peer).items() if key != "pairing_code"},
+            "last_seen_seconds_ago": round(now - peer.last_seen, 1),
+        } for peer in self.peers.values()]
+
+    def peers_with_pairing_code(self, code: str) -> list[dict]:
+        self.snapshot()
+        now = time.monotonic()
+        return [{
+            **{key: value for key, value in asdict(peer).items() if key != "pairing_code"},
+            "last_seen_seconds_ago": round(now - peer.last_seen, 1),
+        } for peer in self.peers.values() if peer.pairing_code == code]
+
+    def advertise_pairing_code(self, code: str, expires_at: float) -> None:
+        self.pairing_code = code
+        self.pairing_expires_at = expires_at
 
     async def start(self) -> None:
         if not self.enabled or self.task:
@@ -172,9 +195,11 @@ class BackendDiscovery:
                     except OSError:
                         pass
                 self.multicast_interface_ips = current_ips
+                active_pairing_code = self.pairing_code if time.monotonic() < self.pairing_expires_at else None
                 payload = json.dumps({
                     "protocol": PROTOCOL, "backend_id": self.backend_id,
                     "name": self.name, "url": self.advertised_url(),
+                    **({"pairing_code": active_pairing_code} if active_pairing_code else {}),
                 }, separators=(",", ":")).encode()
                 multicast_ips = self.multicast_interface_ips or ["0.0.0.0"]
                 for interface_ip in multicast_ips:

@@ -48,3 +48,15 @@ def test_discovery_refreshes_automatic_interface_list(monkeypatch, tmp_path) -> 
     assert service._current_multicast_ips() == ["192.168.1.4"]
     addresses.append({"interface": "ztabc", "family": "ipv4", "address": "10.10.0.4"})
     assert service._current_multicast_ips() == ["192.168.1.4", "10.10.0.4"]
+
+
+def test_discovery_routes_pairing_code_without_exposing_it_in_snapshot(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("MULTICAM_BACKEND_ID_FILE", str(tmp_path / "id"))
+    service = BackendDiscovery()
+    peer_id = str(uuid4())
+    service.receive(json.dumps({
+        "protocol": PROTOCOL, "backend_id": peer_id, "name": "leader",
+        "url": "https://leader:8000", "pairing_code": "23456ABCDE",
+    }).encode(), "10.10.0.2")
+    assert "pairing_code" not in service.snapshot()[0]
+    assert service.peers_with_pairing_code("23456ABCDE")[0]["url"] == "https://10.10.0.2:8000"

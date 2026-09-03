@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import QRCode from 'qrcode'
 import { createPairingOffer, getBackends, getFederationConfig, getFederationTransfers, joinPairingOffer, setFederationBackup, setFederationTransfer, type BackendInfo } from './api'
 
 const emit = defineEmits<{ (event: 'join-session', sessionId: string): void }>()
@@ -10,12 +9,9 @@ const own = ref<BackendInfo | null>(null)
 const error = ref('')
 const federationEnabled = ref(false)
 const transferEnabled = ref(false)
-const pairingQr = ref('')
-const pairingUri = ref('')
 const pairingCode = ref('')
 const pairingInput = ref('')
 const pairingMessage = ref('')
-const scanInput = ref<HTMLInputElement | null>(null)
 const lastSyncAt = ref<string | null>(null)
 const syncError = ref<string | null>(null)
 const federationRole = ref<'standalone' | 'leader' | 'follower'>('standalone')
@@ -45,23 +41,11 @@ async function refresh() {
 async function createOffer() {
   try {
     const offer = await createPairingOffer()
-    pairingUri.value = offer.pairing_uri
     pairingCode.value = offer.pairing_code
-    pairingQr.value = await QRCode.toDataURL(offer.pairing_uri, { margin: 1, width: 280 })
-    pairingMessage.value = 'QR platí 5 minut a lze jej použít jen jednou.'
+    pairingMessage.value = 'Kód platí 5 minut a lze jej použít jen jednou.'
     await refresh()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Párovací QR nelze vytvořit.'
-  }
-}
-
-async function copyPairingLink() {
-  if (!pairingUri.value) return
-  try {
-    await navigator.clipboard.writeText(pairingUri.value)
-    pairingMessage.value = 'Celý párovací odkaz je zkopírovaný. Vložte jej na druhém pultu.'
-  } catch {
-    pairingMessage.value = 'Automatické kopírování není povolené. Označte a zkopírujte odkaz níže.'
   }
 }
 
@@ -74,24 +58,6 @@ async function joinOffer(value = pairingInput.value) {
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Párování selhalo.'
   }
-}
-
-async function scanImage(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0]
-  const Detector = (window as typeof window & { BarcodeDetector?: new (options: { formats: string[] }) => { detect(source: ImageBitmap): Promise<Array<{ rawValue: string }>> } }).BarcodeDetector
-  if (!file || !Detector) {
-    error.value = 'Tento prohlížeč neumí číst QR z obrázku; vložte párovací kód ručně.'
-    return
-  }
-  const bitmap = await createImageBitmap(file)
-  const codes = await new Detector({ formats: ['qr_code'] }).detect(bitmap)
-  bitmap.close()
-  if (!codes[0]?.rawValue) {
-    error.value = 'V obrázku nebyl nalezen QR kód.'
-    return
-  }
-  pairingInput.value = codes[0].rawValue
-  await joinOffer(codes[0].rawValue)
 }
 
 async function toggleTransfer() {
@@ -133,22 +99,14 @@ onBeforeUnmount(() => window.clearInterval(timer))
     <details class="pairing">
       <summary>Spárovat pulty / nastavení federace</summary>
       <div class="pairing-actions">
-        <button class="small" @click="createOffer">Vytvořit párovací QR</button>
-        <button class="small secondary" @click="scanInput?.click()">Načíst QR z obrázku</button>
-        <input ref="scanInput" type="file" accept="image/*" capture="environment" hidden @change="scanImage">
+        <button class="small" @click="createOffer">Vytvořit krátký kód</button>
         <button v-if="federationEnabled" class="small secondary" @click="toggleTransfer">{{ transferEnabled ? 'Odložit páteřní přenosy' : `Spustit odložené přenosy (${pendingTransfers})` }}</button>
         <button v-if="federationRole === 'leader'" class="small secondary" @click="toggleBackup">{{ backupToFollower ? 'Vypnout zálohu na follower' : 'Zapnout zálohu na follower' }}</button>
       </div>
-      <figure v-if="pairingQr"><img :src="pairingQr" alt="Jednorázový QR pro spárování pultů"><figcaption>Načtěte na druhém pultu</figcaption></figure>
-      <div v-if="pairingUri" class="pairing-link">
-        <button class="small secondary" @click="copyPairingLink">Zkopírovat párovací odkaz</button>
-        <code>{{ pairingUri }}</code>
-      </div>
       <p v-if="pairingCode" class="pairing-code"><small>Párovací kód</small><strong>{{ pairingCode.slice(0, 5) }}-{{ pairingCode.slice(5) }}</strong></p>
-      <label>Celý párovací odkaz (doporučeno) nebo krátký kód <textarea v-model="pairingInput" rows="3" placeholder="multicam://federation?…"></textarea></label>
+      <label>Krátký párovací kód <input v-model="pairingInput" maxlength="11" placeholder="ABCDE-FG234"></label>
       <button class="small" :disabled="!pairingInput.trim()" @click="joinOffer()">Spárovat s prvním pultem</button>
       <small v-if="pairingMessage">{{ pairingMessage }}</small>
-      <small>Celý odkaz se připojí přímo a nepotřebuje discovery. Krátký kód funguje pouze tehdy, když se pulty už navzájem našly.</small>
     </details>
   </div>
 </template>
@@ -160,13 +118,9 @@ onBeforeUnmount(() => window.clearInterval(timer))
 .pairing { flex-basis: 100%; padding-top: 8px; }
 .pairing summary { cursor: pointer; font-weight: 700; }
 .pairing-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-.pairing figure { max-width: 280px; margin: 12px 0; padding: 10px; color: #07101d; text-align: center; background: white; border-radius: 10px; }
-.pairing img { display: block; width: 100%; }
 .pairing-code { display: inline-flex; flex-direction: column; gap: 3px; margin: 8px 0 14px; padding: 10px 16px; border: 1px solid #456; border-radius: 9px; }
 .pairing-code strong { font-size: 1.45rem; letter-spacing: .12em; }
-.pairing-link { display: grid !important; justify-items: start; gap: 8px; width: 100%; margin: 8px 0 14px; }
-.pairing-link code { max-width: 100%; padding: 8px; overflow-wrap: anywhere; user-select: all; }
-.pairing label, .pairing textarea { display: block; width: 100%; }
-.pairing textarea { margin: 6px 0 10px; }
+.pairing label, .pairing input { display: block; width: 100%; }
+.pairing input { margin: 6px 0 10px; }
 .sync-error { color: #fca5a5; }
 </style>

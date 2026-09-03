@@ -92,7 +92,9 @@ class Federation:
         # 10 characters from an unambiguous 32-character alphabet = 50 bits.
         alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
         code = "".join(secrets.choice(alphabet) for _ in range(10))
-        self._pairing_codes[code] = time.monotonic() + 300
+        expires_at = time.monotonic() + 300
+        self._pairing_codes[code] = expires_at
+        discovery.advertise_pairing_code(code, expires_at)
         return code
 
     def accept_pairing(self, code: str) -> str:
@@ -132,8 +134,9 @@ class Federation:
         self.last_error = str(error) or error.__class__.__name__
 
     async def pair_with_discovered_peer(self, code: str) -> None:
+        candidates = discovery.peers_with_pairing_code(code) or discovery.snapshot()
         results = await asyncio.gather(*(
-            self.pair_with(peer["url"], code) for peer in discovery.snapshot()
+            self.pair_with(peer["url"], code) for peer in candidates
         ), return_exceptions=True)
         if not results or all(isinstance(result, Exception) for result in results):
             raise ValueError("No discovered backend accepted the pairing code")
