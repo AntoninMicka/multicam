@@ -229,6 +229,7 @@ export interface ZeroTierStatus {
   online: boolean
   node_id?: string
   version?: string
+  cli_path?: string
   detail?: string | null
   networks: Array<{
     id: string

@@ -9,10 +9,22 @@ import subprocess
 from pathlib import Path
 
 NETWORK_ID = re.compile(r"^[0-9a-fA-F]{16}$")
+EXECUTABLE_DIRS = ("/usr/sbin", "/usr/local/sbin", "/usr/bin", "/usr/local/bin", "/sbin")
 
 
 class ZeroTierError(RuntimeError):
     pass
+
+
+def _executable(name: str) -> str | None:
+    found = shutil.which(name)
+    if found:
+        return found
+    for directory in EXECUTABLE_DIRS:
+        candidate = Path(directory) / name
+        if candidate.is_file() and candidate.stat().st_mode & 0o111:
+            return str(candidate)
+    return None
 
 
 def _run(command: list[str], timeout: int = 15) -> subprocess.CompletedProcess[str]:
@@ -20,14 +32,18 @@ def _run(command: list[str], timeout: int = 15) -> subprocess.CompletedProcess[s
 
 
 def status() -> dict:
-    cli = shutil.which("zerotier-cli")
+    cli = _executable("zerotier-cli")
     if not cli:
         return {"installed": False, "online": False, "networks": [], "detail": "ZeroTier není nainstalovaný."}
     info = _run([cli, "-j", "info"])
     networks = _run([cli, "-j", "listnetworks"])
     if info.returncode or networks.returncode:
         detail = (info.stderr or networks.stderr or info.stdout or networks.stdout).strip()
-        return {"installed": True, "online": False, "networks": [], "detail": detail or "ZeroTier CLI není dostupné pro tohoto uživatele."}
+        return {
+            "installed": True, "online": False, "networks": [],
+            "cli_path": cli,
+            "detail": detail or "ZeroTier je nainstalovaný, ale CLI není dostupné pro tohoto uživatele. Zkontrolujte službu zerotier-one a oprávnění.",
+        }
     try:
         node = json.loads(info.stdout)
         joined = json.loads(networks.stdout)
@@ -38,6 +54,7 @@ def status() -> dict:
         "online": bool(node.get("online")),
         "node_id": node.get("address"),
         "version": node.get("version"),
+        "cli_path": cli,
         "networks": [{
             "id": item.get("nwid"), "name": item.get("name") or "nepojmenovaná síť",
             "status": item.get("status"), "type": item.get("type"),
@@ -54,11 +71,11 @@ def join(network_id: str, project_dir: Path, install: bool = False) -> dict:
     if network_id and not NETWORK_ID.fullmatch(network_id):
         raise ZeroTierError("Network ID musí obsahovat přesně 16 hexadecimálních znaků")
     normalized = network_id.lower()
-    pkexec = shutil.which("pkexec")
+    pkexec = _executable("pkexec")
     if not pkexec:
         suffix = f" {normalized}" if normalized else ""
         raise ZeroTierError(f"Chybí pkexec. Použijte v terminálu: sudo ./scripts/setup-zerotier.sh {'--install' if install else ''}{suffix}")
-    cli = shutil.which("zerotier-cli")
+    cli = _executable("zerotier-cli")
     if install or not cli:
         command = [pkexec, str(project_dir / "scripts" / "setup-zerotier.sh"), "--install"]
         if normalized:

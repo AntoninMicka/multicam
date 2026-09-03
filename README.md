@@ -208,6 +208,10 @@ později; pokud je vyplněné, instalace a připojení proběhnou v jednom kroku
 Privilegovaná část používá pouze `pkexec` s pevně validovaným Network
 ID a existujícím setup skriptem, nikoli obecný shell. Operace je povolená jen z
 lokálně otevřeného režisérského pultu.
+Na Debianu se CLI hledá explicitně také v `/usr/sbin`, `/usr/local/sbin` a
+`/sbin`, protože tyto adresáře často nejsou v `PATH` backendu spuštěného z GUI.
+Panel rozlišuje chybějící instalaci od instalace, jejíž CLI nemá potřebná
+oprávnění, a zobrazuje nalezenou cestu k binárce.
 
 ### Ruční spuštění
 
