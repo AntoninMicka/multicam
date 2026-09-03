@@ -149,6 +149,17 @@ dokončí upload na přímo připojený backend, ověří se video i telemetrie 
 klapka zůstane v trvalé federační frontě. UI ukazuje počet čekajících přenosů.
 Po volbě **Spustit odložené přenosy** retry smyčka frontu automaticky odešle;
 primárně follower → leader, případně sekundárně leader → follower jako zálohu.
+Federační data se nikdy neposílají ve stavu `RECORDING` ani před ověřením všech
+lokálních streamů dané klapky. Pro video se používá pouze peer aktuálně viděný
+přes discovery; uložená adresa leadera slouží řídicímu kanálu, ale sama nestačí
+ke spuštění velkého přenosu. Pokud přímé spojení zmizí nebo se backend vypne,
+chybějící potvrzení zůstane na disku a po restartu a novém discovery spojení se
+klapka znovu zařadí k odeslání.
+Také lokální uploady jsou během `RECORDING` uzamčené. Po `STOP` backend udělí
+časově obnovovaný upload lease vždy jedné lokální kameře; její video a
+telemetrie mohou běžet souběžně, další telefon čeká a využije existující retry.
+Po ověření obou artefaktů se lease uvolní další kameře. Role kamery pořadí ani
+cílový backend nijak nemění.
 
 U nalezeného pultu se zobrazuje jeho aktivní relace a tlačítko pro připojení
 lokálního pultu. Relace lze odstranit ze seznamu; po potvrzení se smažou její

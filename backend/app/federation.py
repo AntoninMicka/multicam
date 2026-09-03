@@ -151,6 +151,15 @@ class Federation:
                 by_id.setdefault(backend_id, {"backend_id": backend_id, "url": url, "name": "follower"})
         return list(by_id.values())
 
+    def direct_transfer_peers(self) -> list[dict]:
+        """Peers currently observed by discovery; never use a stale URL for media."""
+        peers = discovery.snapshot()
+        if self.role == "follower":
+            return [peer for peer in peers if peer["backend_id"] == self.leader_backend_id]
+        if self.role == "leader":
+            return [peer for peer in peers if peer["backend_id"] in self.followers]
+        return []
+
     def register_follower(self, backend_id: str, url: str) -> None:
         if self.role != "leader" or not url.startswith(("http://", "https://")):
             raise ValueError("Follower registration is not valid on this backend")

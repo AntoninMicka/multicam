@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 from urllib.parse import parse_qs, urlencode, urlparse
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -56,6 +57,7 @@ app = FastAPI(title="MultiCam control server", version="0.1.0", lifespan=lifespa
 active_clap_sequences: set[UUID] = set()
 analysis_tasks: set[asyncio.Task] = set()
 federation_tasks: set[asyncio.Task] = set()
+upload_leases: dict[UUID, tuple[UUID, float]] = {}
 peer_active_sessions: dict[str, dict | None] = {}
 deleted_sessions_path = uploads.root / ".federation-deleted.json"
 try:
@@ -381,7 +383,8 @@ async def federation_sync_loop() -> None:
                             "type": "federation.active_session",
                             "payload": {"session_id": str(active_id)},
                         })
-                    await sync_completed_takes(peer)
+                    if any(item["backend_id"] == peer["backend_id"] for item in federation.direct_transfer_peers()):
+                        await sync_completed_takes(peer)
                     federation.mark_sync_ok()
                 except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
                     federation.mark_sync_error(error)
@@ -507,6 +510,14 @@ async def require_device(session_id: UUID, device_id: UUID) -> None:
 )
 async def create_upload(session_id: UUID, device_id: UUID, data: UploadCreate) -> UploadStatus:
     await require_device(session_id, device_id)
+    session = await store.get(session_id)
+    if session.state == SessionState.RECORDING:
+        raise HTTPException(status_code=423, detail="Upload čeká na ukončení záznamu")
+    now = time.monotonic()
+    lease = upload_leases.get(session_id)
+    if lease and lease[0] != device_id and now - lease[1] < 60:
+        raise HTTPException(status_code=429, detail="Lokální upload právě používá jiná kamera", headers={"Retry-After": "3"})
+    upload_leases[session_id] = (device_id, now)
     result = await uploads.create(session_id, device_id, data)
     updated = await store.set_device_state(session_id, device_id, DeviceState.UPLOADING)
     await connections.broadcast(session_id, {"type": "session.updated", "payload": updated.model_dump(mode="json")})
@@ -519,6 +530,12 @@ async def create_upload(session_id: UUID, device_id: UUID, data: UploadCreate) -
 )
 async def get_upload(session_id: UUID, device_id: UUID, upload_id: UUID) -> UploadStatus:
     await require_device(session_id, device_id)
+    if (await store.get(session_id)).state == SessionState.RECORDING:
+        raise HTTPException(status_code=423, detail="Upload čeká na ukončení záznamu")
+    lease = upload_leases.get(session_id)
+    if lease and lease[0] != device_id and time.monotonic() - lease[1] < 60:
+        raise HTTPException(status_code=429, detail="Lokální upload právě používá jiná kamera", headers={"Retry-After": "3"})
+    upload_leases[session_id] = (device_id, time.monotonic())
     try:
         return uploads.status(session_id, device_id, upload_id)
     except UploadNotFoundError as error:
@@ -561,6 +578,8 @@ async def put_upload_chunk(
 )
 async def complete_upload(session_id: UUID, device_id: UUID, upload_id: UUID) -> UploadReceipt:
     await require_device(session_id, device_id)
+    if (await store.get(session_id)).state == SessionState.RECORDING:
+        raise HTTPException(status_code=423, detail="Upload čeká na ukončení záznamu")
     try:
         receipt = await uploads.complete(session_id, device_id, upload_id)
     except UploadNotFoundError as error:
@@ -570,6 +589,8 @@ async def complete_upload(session_id: UUID, device_id: UUID, upload_id: UUID) ->
     next_state = DeviceState.VERIFIED if uploads.capture_verified(session_id, device_id, receipt.capture_id) else DeviceState.UPLOADING
     updated = await store.set_device_state(session_id, device_id, next_state)
     await connections.broadcast(session_id, {"type": "session.updated", "payload": updated.model_dump(mode="json")})
+    if next_state == DeviceState.VERIFIED:
+        upload_leases.pop(session_id, None)
     if next_state == DeviceState.VERIFIED and federation.enabled and federation.transfer_enabled:
         media = next((item for item in uploads.list_media(updated) if item.capture_id == receipt.capture_id), None)
         if media:
@@ -580,7 +601,7 @@ async def complete_upload(session_id: UUID, device_id: UUID, upload_id: UUID) ->
 
 
 async def replicate_completed_take(session_id: UUID, take_id: UUID) -> None:
-    peers = federation.target_peers()
+    peers = federation.direct_transfer_peers()
     if federation.role == "leader" and not federation.backup_to_follower:
         return
     for peer in peers:
@@ -589,6 +610,8 @@ async def replicate_completed_take(session_id: UUID, take_id: UUID) -> None:
 
 async def replicate_take_to_peer(session_id: UUID, take_id: UUID, peer: dict) -> None:
     session = await store.get(session_id)
+    if session.state == SessionState.RECORDING:
+        return
     report = uploads.build_report(session)
     take = next((item for item in report["takes"] if item["take_id"] == str(take_id)), None)
     if not take or not take["complete"]:
@@ -623,7 +646,11 @@ async def sync_completed_takes(peer: dict) -> None:
         return
     if federation.role == "leader" and not federation.backup_to_follower:
         return
+    if not any(item["backend_id"] == peer["backend_id"] for item in federation.direct_transfer_peers()):
+        return
     for session in await store.list():
+        if session.state == SessionState.RECORDING:
+            continue
         report = uploads.build_report(session)
         for take in report["takes"]:
             if take["complete"]:
@@ -839,10 +866,11 @@ async def get_recording_telemetry(session_id: UUID, device_id: UUID, capture_id:
 
 async def apply_control(session_id: UUID, message: SocketMessage, *, relay: bool) -> None:
     current = await store.get(session_id)
-    controlled_devices = list(current.devices.values()) if federation.role == "leader" else [
+    local_devices = [
         device for device in current.devices.values()
         if not device.owner_backend_id or device.owner_backend_id == discovery.backend_id
     ]
+    controlled_devices = list(current.devices.values()) if federation.role == "leader" else local_devices
     if message.type == "control.arm":
         session = await store.set_state(session_id, SessionState.ARMED)
     elif message.type == "recording.start":
@@ -851,6 +879,12 @@ async def apply_control(session_id: UUID, message: SocketMessage, *, relay: bool
             raise HTTPException(status_code=409, detail=f"Kamery bez ARM: {', '.join(unready)}")
         message.payload.setdefault("take_id", str(uuid4()))
         session = await store.set_state(session_id, SessionState.RECORDING)
+        uploads.append_session_event(session_id, {
+            "type": "recording.started", "take_id": message.payload["take_id"],
+            "local_device_ids": [str(device.device_id) for device in local_devices if device.connected],
+            "backend_id": discovery.backend_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
     elif message.type == "recording.stop":
         session = await store.set_state(session_id, SessionState.STOPPED)
     else:

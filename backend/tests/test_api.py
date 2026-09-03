@@ -7,7 +7,7 @@ from uuid import UUID
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.main import app, deleted_session_ids
+from app.main import app, deleted_session_ids, upload_leases
 from app.federation import federation
 from app.models import SessionState
 from app.store import SessionStore, store
@@ -38,6 +38,7 @@ def isolated_storage(tmp_path) -> None:
     federation.backup_to_follower = False
     federation.followers = {}
     deleted_session_ids.clear()
+    upload_leases.clear()
 
 
 def test_health() -> None:
@@ -160,6 +161,23 @@ def test_deferred_federation_transfer_reports_queue_state(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["deferred"] is True
     assert response.json()["direction"] == "follower_to_leader"
+
+
+def test_upload_is_locked_during_recording() -> None:
+    session = asyncio.run(request("POST", "/api/sessions", json={"name": "Záznam"})).json()
+    device = asyncio.run(request(
+        "POST", f"/api/sessions/{session['session_id']}/devices",
+        json={"name": "Kamera", "role": "secondary_camera"},
+    )).json()
+    asyncio.run(store.set_state(UUID(session["session_id"]), SessionState.RECORDING))
+    response = asyncio.run(request(
+        "POST", f"/api/sessions/{session['session_id']}/devices/{device['device_id']}/uploads",
+        json={
+            "file_name": "recording.webm", "mime_type": "video/webm", "size_bytes": 1,
+            "sha256": "0" * 64, "chunk_size": 256 * 1024, "total_chunks": 1,
+        },
+    ))
+    assert response.status_code == 423
 
 
 def test_session_can_be_deleted_but_not_while_recording(monkeypatch) -> None:

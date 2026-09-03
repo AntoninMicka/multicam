@@ -312,6 +312,11 @@ class UploadService:
             events = [json.loads(line) for line in event_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
         except (OSError, ValueError):
             events = []
+        take_rosters = {
+            str(event["take_id"]): set(event.get("local_device_ids", []))
+            for event in events
+            if event.get("type") == "recording.started" and event.get("take_id")
+        }
         local_backend_id = os.environ.get("MULTICAM_BACKEND_ID_RUNTIME")
         expected_devices = {
             str(device.device_id): {"name": device.name, "role": device.role.value}
@@ -348,8 +353,9 @@ class UploadService:
             })
         for take in takes.values():
             received = {stream["device_id"] for stream in take["streams"]}
+            expected_for_take = take_rosters.get(take["take_id"], set(expected_devices))
             take["received_device_ids"] = sorted(received)
-            take["missing_device_ids"] = sorted(set(expected_devices) - received)
+            take["missing_device_ids"] = sorted(expected_for_take - received)
             take["complete"] = not take["missing_device_ids"] and all(
                 {"recording", "telemetry"}.issubset(stream["artifacts"]) for stream in take["streams"]
             )
