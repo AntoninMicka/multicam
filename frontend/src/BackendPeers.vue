@@ -17,6 +17,7 @@ const syncError = ref<string | null>(null)
 const federationRole = ref<'standalone' | 'leader' | 'follower'>('standalone')
 const backupToFollower = ref(false)
 const pendingTransfers = ref(0)
+const discoveryDetail = ref('')
 let timer = 0
 
 async function refresh() {
@@ -26,6 +27,14 @@ async function refresh() {
     peers.value = result.peers
     federationEnabled.value = result.federation_enabled
     transferEnabled.value = result.transfer_enabled
+    const diagnostic = result.discovery_diagnostics
+    discoveryDetail.value = !result.peers.length && diagnostic
+      ? diagnostic.last_rejection
+        ? `Discovery odmítlo paket z ${diagnostic.last_source ?? '?'}: ${diagnostic.last_rejection}. Vlastní ID: ${diagnostic.backend_id}`
+        : diagnostic.received_packets
+          ? `Poslední paket z ${diagnostic.last_source ?? '?'} před ${diagnostic.last_packet_seconds_ago ?? '?'} s; čekám na platný heartbeat.`
+          : `Nepřišel žádný heartbeat. Poslouchám na: ${diagnostic.listening_interface_ips.join(', ') || 'výchozí rozhraní'}.`
+      : ''
     const config = await getFederationConfig()
     lastSyncAt.value = config.last_sync_at
     syncError.value = config.last_error
@@ -89,7 +98,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
   <div class="backend-peers">
     <div><strong>Backend: {{ own?.name ?? 'načítám…' }}</strong><small v-if="own">{{ own.url }}</small><small v-if="federationEnabled">Federace {{ federationRole }} · páteřní přenos {{ transferEnabled ? 'povolený' : 'odložený' }} · ve frontě {{ pendingTransfers }}</small><small v-else>Jen discovery · federace není nakonfigurovaná</small><small v-if="lastSyncAt">Poslední synchronizace: {{ new Date(lastSyncAt).toLocaleTimeString() }}</small><small v-if="syncError" class="sync-error">Synchronizace selhala: {{ syncError }}</small></div>
     <span v-if="error" class="muted">{{ error }}</span>
-    <span v-else-if="!peers.length" class="muted">Další pult nenalezen</span>
+    <span v-else-if="!peers.length" class="muted">{{ discoveryDetail || 'Další pult nenalezen' }}</span>
     <a v-for="peer in peers" :key="peer.backend_id" :href="peer.url" target="_blank" rel="noopener">
       {{ peer.name }} · {{ (peer.last_seen_seconds_ago ?? 0).toFixed(1) }} s
     </a>

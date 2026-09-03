@@ -53,6 +53,10 @@ class BackendDiscovery:
         self.multicast_interface_ips: list[str] = []
         self.pairing_code: str | None = None
         self.pairing_expires_at: float = 0
+        self.received_packets = 0
+        self.last_received_at: float | None = None
+        self.last_source: str | None = None
+        self.last_rejection: str | None = None
 
     def _current_multicast_ips(self) -> list[str]:
         if self.interface_ip != "0.0.0.0":
@@ -93,10 +97,17 @@ class BackendDiscovery:
         return f"{scheme}://{host}:{os.getenv('MULTICAM_PORT', '8000')}"
 
     def receive(self, raw: bytes, address: str) -> None:
+        self.received_packets += 1
+        self.last_received_at = time.monotonic()
+        self.last_source = address
         try:
             message = json.loads(raw)
             peer_id = str(UUID(message["backend_id"]))
-            if message.get("protocol") != PROTOCOL or peer_id == self.backend_id:
+            if message.get("protocol") != PROTOCOL:
+                self.last_rejection = "jiná verze discovery protokolu"
+                return
+            if peer_id == self.backend_id:
+                self.last_rejection = "druhý pult používá stejné backend ID"
                 return
             name, url = str(message["name"]), str(message["url"])
             pairing_code = message.get("pairing_code")
@@ -105,6 +116,7 @@ class BackendDiscovery:
                 if len(pairing_code) != 10 or not pairing_code.isalnum():
                     pairing_code = None
             if not name or not url.startswith(("http://", "https://")):
+                self.last_rejection = "neplatný název nebo URL pultu"
                 return
             # The address observed on the UDP packet is routable on the exact
             # interface that delivered discovery. Prefer it over advertised
@@ -115,8 +127,22 @@ class BackendDiscovery:
             netloc = f"{host}:{port}" if port else host
             url = urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, "")).rstrip("/")
         except (KeyError, TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
+            self.last_rejection = "neplatný discovery paket"
             return
         self.peers[peer_id] = Peer(peer_id, name[:80], url, address, time.monotonic(), pairing_code)
+        self.last_rejection = None
+
+    def diagnostics(self) -> dict:
+        age = time.monotonic() - self.last_received_at if self.last_received_at is not None else None
+        return {
+            "backend_id": self.backend_id,
+            "received_packets": self.received_packets,
+            "last_packet_seconds_ago": round(age, 1) if age is not None else None,
+            "last_source": self.last_source,
+            "last_rejection": self.last_rejection,
+            "listening_interface_ips": self.multicast_interface_ips,
+            "advertised_url": self.advertised_url(),
+        }
 
     def snapshot(self) -> list[dict]:
         now = time.monotonic()

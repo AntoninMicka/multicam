@@ -114,6 +114,7 @@ async def list_backends() -> dict:
         "federation_enabled": federation.enabled,
         "transfer_enabled": federation.transfer_enabled,
         "federation_role": federation.role,
+        "discovery_diagnostics": discovery.diagnostics(),
     }
 
 

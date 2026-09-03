@@ -18,6 +18,15 @@ export interface BackendStatus {
   discovery_enabled: boolean
   federation_enabled: boolean
   transfer_enabled: boolean
+  discovery_diagnostics?: {
+    backend_id: string
+    received_packets: number
+    last_packet_seconds_ago: number | null
+    last_source: string | null
+    last_rejection: string | null
+    listening_interface_ips: string[]
+    advertised_url: string
+  }
 }
 
 export interface FederationConfig {

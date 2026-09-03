@@ -16,6 +16,7 @@ def test_discovery_accepts_valid_peer_and_ignores_invalid(monkeypatch, tmp_path)
     assert peers[0]["backend_id"] == peer_id
     assert peers[0]["address"] == "10.10.10.2"
     assert peers[0]["url"] == "https://10.10.10.2:8000"
+    assert service.diagnostics()["received_packets"] == 2
 
 
 def test_discovery_expires_old_peers(monkeypatch, tmp_path) -> None:
