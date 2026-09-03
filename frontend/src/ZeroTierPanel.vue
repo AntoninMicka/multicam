@@ -11,6 +11,7 @@ const error = ref('')
 async function refresh() {
   try {
     status.value = await getZeroTierStatus()
+    if (!networkId.value && status.value.remembered_network_id) networkId.value = status.value.remembered_network_id
     error.value = ''
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Stav ZeroTier nelze načíst.'
@@ -39,7 +40,7 @@ onMounted(refresh)
 <template>
   <section class="zerotier-panel">
     <details>
-      <summary><span><span class="eyebrow">páteřní síť</span><strong>ZeroTier</strong></span><span :class="['state', { online: status.online }]">{{ !status.installed ? 'nenainstalován' : status.online ? 'online' : 'offline' }}</span></summary>
+      <summary><span><span class="eyebrow">páteřní síť</span><strong>ZeroTier</strong></span><span :class="['state', { online: status.online, unknown: status.installed && status.status_available === false }]">{{ !status.installed ? 'nenainstalován' : status.status_available === false ? 'stav nedostupný' : status.online ? 'online' : 'offline' }}</span></summary>
       <div class="toolbar"><small v-if="status.node_id">Node {{ status.node_id }} · {{ status.version }}</small><button class="small secondary" @click="refresh">Obnovit</button></div>
       <small v-if="status.cli_path" class="muted">CLI: {{ status.cli_path }}</small>
       <p v-if="status.detail" class="muted">{{ status.detail }}</p>
@@ -65,6 +66,7 @@ summary { display: flex; align-items: center; justify-content: space-between; ga
 summary > span:first-child { display: inline-flex; flex-direction: column; gap: 3px; }
 .state { padding: 5px 9px; color: #fca5a5; border-radius: 999px; background: #7f1d1d55; font-size: .72rem; font-weight: 800; }
 .state.online { color: #86efac; background: #14532d55; }
+.state.unknown { color: #fde68a; background: #78350f66; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
 .networks { display: grid; gap: 8px; margin-top: 12px; }
 .networks article { display: grid; gap: 4px; padding: 10px; border: 1px solid #283750; border-radius: 9px; }

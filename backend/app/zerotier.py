@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -14,6 +15,31 @@ EXECUTABLE_DIRS = ("/usr/sbin", "/usr/local/sbin", "/usr/bin", "/usr/local/bin",
 
 class ZeroTierError(RuntimeError):
     pass
+
+
+def _config_path() -> Path:
+    return Path(os.getenv("MULTICAM_ZEROTIER_CONFIG", "data/zerotier.json"))
+
+
+def remembered_network_id() -> str | None:
+    configured = os.getenv("MULTICAM_ZEROTIER_NETWORK", "").strip().lower()
+    if NETWORK_ID.fullmatch(configured):
+        return configured
+    try:
+        saved = json.loads(_config_path().read_text(encoding="utf-8"))
+        value = str(saved.get("network_id", "")).strip().lower()
+        return value if NETWORK_ID.fullmatch(value) else None
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _remember_network_id(network_id: str) -> None:
+    path = _config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"network_id": network_id}), encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
 
 
 def _executable(name: str) -> str | None:
@@ -32,17 +58,29 @@ def _run(command: list[str], timeout: int = 15) -> subprocess.CompletedProcess[s
 
 
 def status() -> dict:
+    remembered = remembered_network_id()
     cli = _executable("zerotier-cli")
     if not cli:
-        return {"installed": False, "online": False, "networks": [], "detail": "ZeroTier není nainstalovaný."}
+        return {
+            "installed": False, "online": False, "networks": [],
+            "remembered_network_id": remembered, "detail": "ZeroTier není nainstalovaný.",
+        }
     info = _run([cli, "-j", "info"])
     networks = _run([cli, "-j", "listnetworks"])
     if info.returncode or networks.returncode:
         detail = (info.stderr or networks.stderr or info.stdout or networks.stdout).strip()
+        access_denied = "authtoken.secret" in detail or "permission denied" in detail.lower()
         return {
             "installed": True, "online": False, "networks": [],
+            "status_available": not access_denied,
+            "remembered_network_id": remembered,
             "cli_path": cli,
-            "detail": detail or "ZeroTier je nainstalovaný, ale CLI není dostupné pro tohoto uživatele. Zkontrolujte službu zerotier-one a oprávnění.",
+            "detail": (
+                "ZeroTier je nainstalovaný, ale MultiCam nemá oprávnění načíst stav služby. "
+                "Tunel může být online; ověřte jej příkazem sudo zerotier-cli info."
+                if access_denied else detail or
+                "ZeroTier je nainstalovaný, ale CLI není dostupné pro tohoto uživatele. Zkontrolujte službu zerotier-one a oprávnění."
+            ),
         }
     try:
         node = json.loads(info.stdout)
@@ -52,6 +90,8 @@ def status() -> dict:
     return {
         "installed": True,
         "online": bool(node.get("online")),
+        "status_available": True,
+        "remembered_network_id": remembered,
         "node_id": node.get("address"),
         "version": node.get("version"),
         "cli_path": cli,
@@ -85,4 +125,6 @@ def join(network_id: str, project_dir: Path, install: bool = False) -> dict:
     result = _run(command, timeout=180)
     if result.returncode:
         raise ZeroTierError((result.stderr or result.stdout).strip() or "Připojení k ZeroTier síti selhalo")
+    if normalized:
+        _remember_network_id(normalized)
     return {"accepted": True, "network_id": normalized or None, "detail": (result.stdout or "Požadavek byl odeslán.").strip()}

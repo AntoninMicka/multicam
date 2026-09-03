@@ -1,8 +1,9 @@
+import json
 from pathlib import Path
 
 import pytest
 
-from app.zerotier import ZeroTierError, join
+from app.zerotier import ZeroTierError, join, status
 
 
 def test_network_id_is_optional_only_for_install(tmp_path: Path, monkeypatch) -> None:
@@ -29,3 +30,30 @@ def test_cli_is_found_in_debian_sbin_when_path_does_not_contain_it(tmp_path: Pat
     monkeypatch.setattr(zerotier.shutil, "which", lambda name: None)
     monkeypatch.setattr(zerotier, "EXECUTABLE_DIRS", (str(tmp_path),))
     assert zerotier._executable("zerotier-cli") == str(cli)
+
+
+def test_status_distinguishes_missing_cli_permission_from_offline(monkeypatch) -> None:
+    from app import zerotier
+    monkeypatch.setattr(zerotier, "_executable", lambda name: "/usr/sbin/zerotier-cli")
+    monkeypatch.setattr(zerotier, "_run", lambda command: __import__("subprocess").CompletedProcess(
+        command, 1, "", "authtoken.secret not found or readable",
+    ))
+    result = status()
+    assert result["installed"] is True
+    assert result["status_available"] is False
+    assert "Tunel může být online" in result["detail"]
+
+
+def test_successful_join_remembers_network_id(tmp_path: Path, monkeypatch) -> None:
+    from app import zerotier
+    config = tmp_path / "zerotier.json"
+    monkeypatch.setenv("MULTICAM_ZEROTIER_CONFIG", str(config))
+    monkeypatch.delenv("MULTICAM_ZEROTIER_NETWORK", raising=False)
+    monkeypatch.setattr(zerotier, "_executable", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(zerotier, "_run", lambda command, timeout=15: __import__("subprocess").CompletedProcess(
+        command, 0, "OK", "",
+    ))
+    network_id = "8056c2e21c000001"
+    assert join(network_id, tmp_path)["accepted"] is True
+    assert zerotier.remembered_network_id() == network_id
+    assert json.loads(config.read_text())["network_id"] == network_id

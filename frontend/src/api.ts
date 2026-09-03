@@ -227,6 +227,8 @@ export function getNetworkInterfaces(): Promise<{ interfaces: NetworkInterfaceAd
 export interface ZeroTierStatus {
   installed: boolean
   online: boolean
+  status_available?: boolean
+  remembered_network_id?: string | null
   node_id?: string
   version?: string
   cli_path?: string
