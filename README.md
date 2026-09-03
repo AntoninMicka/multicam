@@ -85,6 +85,10 @@ frontend. Po připojení nového rozhraní lze seznam obnovit bez restartu serve
 QR panely jsou ve výchozím stavu sbalené. Na telefonu/tabletu úvodní obrazovka
 nabízí pouze hlavní, top-down a vedlejší kameru; na desktopu pouze režisérský
 pult.
+Kamerový pohled reaguje na orientaci zařízení: v portrétu skládá velká dotyková
+tlačítka pod náhled, v krajině využije téměř celou výšku pro obraz a ovládání
+přesune do samostatného posuvného panelu vpravo. Rozložení respektuje safe-area
+výřezy telefonu a při otočení se přepne pouze pomocí CSS bez přerušení záznamu.
 
 ### Dva režisérské pulty přes ZeroTier
 

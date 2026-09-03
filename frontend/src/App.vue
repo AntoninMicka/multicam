@@ -958,7 +958,7 @@ onBeforeUnmount(() => {
       </template>
     </section>
 
-    <section v-else class="card">
+    <section v-else class="card" :class="{ 'camera-console': role !== 'director' }">
       <div class="session-heading"><div><span class="eyebrow">{{ roleLabel(role) }}</span><h2>{{ session.name }}</h2></div><span class="status">{{ session.state }}</span></div>
 
       <template v-if="role === 'director'">
@@ -994,23 +994,29 @@ onBeforeUnmount(() => {
         </div>
       </template>
       <template v-else>
-        <div v-if="operationalWarnings.length" class="warning-list"><strong>Upozornění</strong><small v-for="warning in operationalWarnings" :key="warning">{{ warning }}</small></div>
-        <video ref="preview" class="preview" autoplay muted playsinline></video>
-        <div class="ready"><span>✓</span><div><strong>Zařízení je připravené</strong><small>{{ deviceName }} · {{ VIDEO_PROFILES[selectedVideoProfile].label }}</small><small>{{ activeVideoSettings }}</small></div></div>
-        <div v-if="role === 'main_camera'" class="record-controls">
-          <template v-if="session.state !== 'recording'">
-            <button v-if="session.state !== 'armed'" class="secondary" :disabled="!cameraReady" @click="sendRecordingCommand('control.arm')">1. ARM · připravit kamery</button>
-            <button v-else :disabled="!cameraReady || recordingStarting || recordingFinalizing" @click="sendRecordingCommand('recording.start')">2. ● Spustit záznam</button>
-          </template>
-          <button v-else class="stop" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
+        <div class="camera-workspace">
+          <div class="camera-view">
+            <div v-if="operationalWarnings.length" class="warning-list"><strong>Upozornění</strong><small v-for="warning in operationalWarnings" :key="warning">{{ warning }}</small></div>
+            <video ref="preview" class="preview" autoplay muted playsinline></video>
+            <p v-if="role !== 'main_camera' && recording" class="recording-indicator">● Probíhá záznam</p>
+          </div>
+          <div class="camera-controls">
+            <div class="ready"><span>✓</span><div><strong>Zařízení je připravené</strong><small>{{ deviceName }} · {{ VIDEO_PROFILES[selectedVideoProfile].label }}</small><small>{{ activeVideoSettings }}</small></div></div>
+            <div v-if="role === 'main_camera'" class="record-controls">
+              <template v-if="session.state !== 'recording'">
+                <button v-if="session.state !== 'armed'" class="secondary" :disabled="!cameraReady" @click="sendRecordingCommand('control.arm')">1. ARM · připravit kamery</button>
+                <button v-else :disabled="!cameraReady || recordingStarting || recordingFinalizing" @click="sendRecordingCommand('recording.start')">2. ● Spustit záznam</button>
+              </template>
+              <button v-else class="stop" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
+            </div>
+            <button v-if="role === 'main_camera'" class="clap-button" @click="flashClap">Otestovat světelnou klapku</button>
+            <div v-if="uploadProgress !== null" class="upload">
+              <div><strong>{{ uploadVerified ? 'Přenos ověřen' : 'Přenáším záznam' }}</strong><span>{{ uploadProgress }} %</span></div>
+              <progress :value="uploadProgress" max="100"></progress>
+            </div>
+            <a v-if="recordingUrl" class="download" :href="recordingUrl" :download="`${role}-${Date.now()}.webm`">Stáhnout poslední záznam</a>
+          </div>
         </div>
-        <p v-else-if="recording" class="recording-indicator">● Probíhá záznam</p>
-        <button v-if="role === 'main_camera'" class="clap-button" @click="flashClap">Otestovat světelnou klapku</button>
-        <div v-if="uploadProgress !== null" class="upload">
-          <div><strong>{{ uploadVerified ? 'Přenos ověřen' : 'Přenáším záznam' }}</strong><span>{{ uploadProgress }} %</span></div>
-          <progress :value="uploadProgress" max="100"></progress>
-        </div>
-        <a v-if="recordingUrl" class="download" :href="recordingUrl" :download="`${role}-${Date.now()}.webm`">Stáhnout poslední záznam</a>
         <section v-if="localCaptures.length" class="local-captures">
           <h3>Lokální záznamy</h3>
           <article v-for="capture in localCaptures" :key="capture.capture_id" class="local-capture">

@@ -31,6 +31,8 @@ small, .muted { color: #8391a7; overflow-wrap: anywhere; }
 .clap-button { width: 100%; margin: 10px 0 22px; background: #f8fafc; }
 .flash { position: fixed; z-index: 9999; inset: 0; background: white; }
 .preview { width: 100%; max-height: 52vh; margin: 8px 0 18px; border-radius: 14px; background: #030712; object-fit: contain; }
+.camera-workspace, .camera-view, .camera-controls { min-width: 0; }
+.camera-controls .ready { margin-top: 0; }
 .record-controls { display: grid; gap: 10px; margin: 18px 0 10px; }
 .ack-error { color: #fca5a5; }
 button.stop { color: #fff; background: #dc2626; }
@@ -58,3 +60,33 @@ button.session-item { display: flex; align-items: center; justify-content: space
 .archive-button { width: 100%; margin: 0 0 22px; }
 .take-list { display: grid; gap: 22px; margin-top: 14px; }
 @media (max-width: 520px) { main { padding-top: 28px; } .session-heading { align-items: flex-start; } }
+
+@media (orientation: landscape) and (max-height: 700px) and (pointer: coarse) {
+  main:has(.camera-console) { width: 100%; max-width: none; padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); }
+  main:has(.camera-console) > header { display: none; }
+  .camera-console { padding: 10px; border-radius: 14px; }
+  .camera-console > .session-heading { margin-bottom: 8px; }
+  .camera-console > .session-heading h2 { margin: 0; font-size: 1rem; }
+  .camera-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, 30vw); gap: 12px; align-items: start; }
+  .camera-view { position: relative; }
+  .camera-view .preview { width: 100%; height: calc(100dvh - 86px); max-height: none; margin: 0; border-radius: 10px; object-fit: contain; }
+  .camera-view .warning-list { position: absolute; z-index: 2; top: 8px; right: 8px; left: 8px; margin: 0; backdrop-filter: blur(8px); }
+  .camera-view .recording-indicator { position: absolute; right: 10px; bottom: 8px; margin: 0; padding: 7px 10px; border-radius: 999px; background: #450a0acc; }
+  .camera-controls { display: grid; gap: 8px; max-height: calc(100dvh - 86px); overflow-y: auto; overscroll-behavior: contain; }
+  .camera-controls .ready { padding: 10px; gap: 10px; }
+  .camera-controls .ready > span { width: 34px; height: 34px; }
+  .camera-controls .record-controls { margin: 0; }
+  .camera-controls button, .camera-controls .download { min-height: 52px; }
+  .camera-controls .clap-button, .camera-controls .upload { margin: 0; }
+  .camera-console > .local-captures { margin-top: 12px; }
+}
+
+@media (orientation: portrait) and (pointer: coarse) {
+  main:has(.camera-console) { width: min(100% - 20px, 720px); padding-top: max(18px, env(safe-area-inset-top)); padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+  .camera-console { padding: 16px; }
+  .camera-workspace { display: flex; flex-direction: column; }
+  .camera-view .preview { max-height: 48dvh; margin-bottom: 12px; }
+  .camera-controls { display: grid; gap: 10px; }
+  .camera-controls button, .camera-controls .download { min-height: 56px; }
+  .camera-controls .record-controls, .camera-controls .clap-button { margin: 0; }
+}
