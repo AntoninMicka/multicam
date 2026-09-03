@@ -136,7 +136,10 @@ class SessionStore:
                 raise SessionNotFoundError(session_id)
             return session.model_copy(deep=True)
 
-    async def register_device(self, session_id: UUID, data: DeviceRegistration, owner_backend_id: str | None = None) -> Device:
+    async def register_device(
+        self, session_id: UUID, data: DeviceRegistration,
+        owner_backend_id: str | None = None, owner_backend_name: str | None = None,
+    ) -> Device:
         async with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
@@ -147,6 +150,7 @@ class SessionStore:
                 role=data.role,
                 capabilities=data.capabilities,
                 owner_backend_id=owner_backend_id,
+                owner_backend_name=owner_backend_name,
             )
             session.devices[str(device.device_id)] = device
             self._persist(session)

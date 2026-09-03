@@ -205,7 +205,7 @@ def test_legacy_session_without_manifest_is_recovered(tmp_path) -> None:
     assert media[0].telemetry_url is None
 
 
-def test_chunked_upload_is_idempotent_and_verified(tmp_path) -> None:
+def test_chunked_upload_is_idempotent_and_verified(tmp_path, monkeypatch) -> None:
     session = asyncio.run(request("POST", "/api/sessions", json={"name": "Upload test"})).json()
     device = asyncio.run(request(
         "POST",
@@ -273,6 +273,13 @@ def test_chunked_upload_is_idempotent_and_verified(tmp_path) -> None:
     assert len(media) == 1
     assert media[0]["capture_id"] == receipt["capture_id"]
     assert media[0]["take_id"] is not None
+    assert media[0]["available_locally"] is True
+    monkeypatch.setattr(federation, "token", "x" * 32)
+    monkeypatch.setattr(federation, "role", "follower")
+    monkeypatch.setattr(federation, "leader_url", None)
+    follower_media = asyncio.run(request("GET", f"/api/sessions/{session['session_id']}/media")).json()
+    assert follower_media[0]["capture_id"] == receipt["capture_id"]
+    assert follower_media[0]["available_locally"] is True
     report = asyncio.run(request("GET", f"/api/sessions/{session['session_id']}/report")).json()
     assert report["takes"][0]["complete"] is True
     assert report["takes"][0]["streams"][0]["artifacts"]["recording"]["sha256"] == digest

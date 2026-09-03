@@ -172,6 +172,9 @@ class Federation:
     async def get_snapshot(self, peer_url: str) -> dict[str, Any]:
         return json.loads(await asyncio.to_thread(self._request, f"{peer_url}/api/federation/snapshot"))
 
+    async def get_json(self, peer_url: str, path: str) -> Any:
+        return json.loads(await asyncio.to_thread(self._request, f"{peer_url}{path}"))
+
     async def post_json(self, peer_url: str, path: str, payload: dict) -> None:
         data = json.dumps(payload, separators=(",", ":")).encode()
         await asyncio.to_thread(self._request, f"{peer_url}{path}", data=data)

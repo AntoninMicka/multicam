@@ -133,6 +133,9 @@ followeru (včetně povelu z hlavní kamery) procházejí přes leader. V celé
 federaci smí být právě jedna hlavní a jedna top-down kamera, nezávisle na tom,
 ke kterému notebooku jsou připojené. Živé náhledy se mezi backendy neposílají a
 zůstávají jen na pultu příslušného telefonu.
+U každé kamery i pořízeného streamu UI zobrazuje název backendu, ke kterému je
+telefon připojený. Follower vždy načítá své lokálně ověřené záznamy přímo z
+vlastního disku a zobrazí je okamžitě, ještě před replikací na leadera.
 Follower při párování a následně při každém reconnectu registruje u leadera
 svou dosažitelnou adresu. Řídicí povely proto nejsou závislé na obousměrném
 multicast discovery přes ZeroTier.

@@ -7,6 +7,8 @@ export interface Device {
   state: DeviceState
   connected: boolean
   last_seen_at: string
+  owner_backend_id?: string | null
+  owner_backend_name?: string | null
   capabilities: {
     battery_percent: number | null
     free_storage_bytes: number | null

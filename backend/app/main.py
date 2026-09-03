@@ -484,7 +484,7 @@ async def register_device(session_id: UUID, data: DeviceRegistration) -> Device:
             if occupied:
                 raise HTTPException(status_code=409, detail=f"Tuto roli už používá {occupied.name}")
     try:
-        device = await store.register_device(session_id, data, discovery.backend_id)
+        device = await store.register_device(session_id, data, discovery.backend_id, discovery.name)
     except SessionNotFoundError as error:
         raise HTTPException(status_code=404, detail="Session not found") from error
     await connections.broadcast(session_id, {"type": "session.updated", "payload": (await store.get(session_id)).model_dump(mode="json")})
@@ -630,13 +630,44 @@ async def sync_completed_takes(peer: dict) -> None:
                 await replicate_take_to_peer(session.session_id, UUID(take["take_id"]), peer)
 
 
+def media_with_backend(session: Session, media: CaptureMedia, *, available_locally: bool) -> CaptureMedia:
+    device = session.devices.get(str(media.device_id))
+    return media.model_copy(update={
+        "owner_backend_id": device.owner_backend_id if device else None,
+        "owner_backend_name": device.owner_backend_name if device else None,
+        "available_locally": available_locally,
+        "video_url": media.video_url if available_locally else None,
+        "telemetry_url": media.telemetry_url if available_locally else None,
+    })
+
+
+@app.get("/api/federation/sessions/{session_id}/media")
+async def federation_session_media(session_id: UUID, x_multicam_federation: str | None = Header(default=None)) -> list[dict]:
+    require_federation_token(x_multicam_federation)
+    session = await store.get(session_id)
+    return [media_with_backend(session, item, available_locally=True).model_dump(mode="json") for item in uploads.list_media(session)]
+
+
 @app.get("/api/sessions/{session_id}/media", response_model=list[CaptureMedia])
 async def list_session_media(session_id: UUID) -> list[CaptureMedia]:
     try:
         session = await store.get(session_id)
     except SessionNotFoundError as error:
         raise HTTPException(status_code=404, detail="Session not found") from error
-    return uploads.list_media(session)
+    local = [media_with_backend(session, item, available_locally=True) for item in uploads.list_media(session)]
+    combined = {item.capture_id: item for item in local}
+    if federation.enabled and federation.role == "follower" and federation.leader_url:
+        try:
+            remote = await federation.get_json(federation.leader_url, f"/api/federation/sessions/{session_id}/media")
+            for raw in remote:
+                item = CaptureMedia.model_validate(raw)
+                if item.capture_id not in combined:
+                    combined[item.capture_id] = item.model_copy(update={
+                        "video_url": None, "telemetry_url": None, "available_locally": False,
+                    })
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+    return list(combined.values())
 
 
 @app.get("/api/sessions/{session_id}/report")

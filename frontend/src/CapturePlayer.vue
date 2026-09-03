@@ -12,6 +12,11 @@ const mediaError = ref('')
 const alignedToMarker = ref(false)
 
 onMounted(async () => {
+  if (!props.capture.available_locally) {
+    mediaStatus.value = 'paused'
+    loadingError.value = 'Záznam je evidovaný na druhém pultu; na tomto backendu zatím není uložený.'
+    return
+  }
   if (!props.capture.telemetry_url) {
     loadingError.value = 'Tato starší relace nemá telemetrii.'
     return
@@ -48,7 +53,7 @@ function number(value: number | null | undefined, digits = 2): string {
 }
 
 async function playFromStart(): Promise<void> {
-  if (!video.value) return
+  if (!video.value || !props.capture.video_url) throw new Error('Video není na tomto backendu dostupné.')
   video.value.playbackRate = 1
   alignedToMarker.value = canSeekTo(syncOffsetSeconds.value)
   if (alignedToMarker.value) video.value.currentTime = syncOffsetSeconds.value
@@ -92,13 +97,14 @@ defineExpose({ playFromStart, pause, logicalTime, synchronizeTo })
 <template>
   <article class="capture-player">
     <header>
-      <div><strong>{{ capture.device_name }}</strong><small>{{ capture.role }}</small></div>
+      <div><strong>{{ capture.device_name }}</strong><small>{{ capture.role }} · {{ capture.owner_backend_name ?? capture.owner_backend_id?.slice(0, 8) ?? 'neznámý pult' }}</small></div>
       <small>{{ (capture.size_bytes / 1024 / 1024).toFixed(1) }} MB</small>
     </header>
-    <video ref="video" :src="capture.video_url" :muted="muted" controls playsinline preload="auto"
+    <video v-if="capture.video_url" ref="video" :src="capture.video_url" :muted="muted" controls playsinline preload="auto"
       @loadedmetadata="mediaStatus = 'ready'" @playing="mediaStatus = 'playing'" @pause="mediaStatus = 'paused'"
       @ended="mediaStatus = 'ended'" @error="describeMediaError"
       @timeupdate="currentTimeMs = ($event.target as HTMLVideoElement).currentTime * 1000"></video>
+    <div v-else class="remote-placeholder">Záznam není lokálně uložený</div>
     <p :class="['media-state', mediaStatus]">{{ mediaStatus }}<span v-if="mediaError"> · {{ mediaError }}</span></p>
     <p v-if="loadingError" class="telemetry-error">{{ loadingError }}</p>
     <dl v-else class="telemetry-values">
@@ -120,6 +126,7 @@ header { display: flex; align-items: center; justify-content: space-between; gap
 header div { display: grid; gap: 3px; }
 small { color: #8391a7; }
 video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+.remote-placeholder { display: grid; place-items: center; width: 100%; aspect-ratio: 16 / 9; padding: 20px; color: #8391a7; text-align: center; background: #050a12; }
 .telemetry-values { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0; background: #283750; }
 .telemetry-values div { min-width: 0; padding: 9px; background: #101827; }
 dt { color: #8391a7; font-size: .65rem; text-transform: uppercase; }

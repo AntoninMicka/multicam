@@ -48,6 +48,7 @@ class Device(BaseModel):
     connected: bool = True
     last_seen_at: datetime = Field(default_factory=utc_now)
     owner_backend_id: str | None = None
+    owner_backend_name: str | None = None
 
 
 class DeviceRegistration(BaseModel):
@@ -115,6 +116,9 @@ class CaptureMedia(BaseModel):
     mime_type: str
     size_bytes: int
     created_at: datetime | None = None
-    video_url: str
+    video_url: str | None
     telemetry_url: str | None = None
     sync_point_seconds: float | None = None
+    owner_backend_id: str | None = None
+    owner_backend_name: str | None = None
+    available_locally: bool = True

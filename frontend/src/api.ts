@@ -102,9 +102,12 @@ export interface CaptureMedia {
   mime_type: string
   size_bytes: number
   created_at: string | null
-  video_url: string
+  video_url: string | null
   telemetry_url: string | null
   sync_point_seconds: number | null
+  owner_backend_id: string | null
+  owner_backend_name: string | null
+  available_locally: boolean
 }
 
 async function json<T>(response: Response): Promise<T> {
