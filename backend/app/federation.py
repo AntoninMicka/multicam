@@ -213,7 +213,11 @@ class Federation:
     async def send_to_leader(self, path: str, payload: dict) -> None:
         if not self.enabled or self.role != "follower" or not self.leader_url:
             raise ValueError("Leader is not configured")
-        await self.post_json(self.leader_url, path, payload)
+        live = next((
+            peer["url"] for peer in discovery.snapshot()
+            if peer["backend_id"] == self.leader_backend_id
+        ), None)
+        await self.post_json(live or self.leader_url, path, payload)
 
     async def send_bundle(self, peer_url: str, path: Path, session_id: str, take_id: str) -> None:
         if not self.enabled or not self.transfer_enabled:

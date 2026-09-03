@@ -10,6 +10,7 @@ import socket
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
 from .network import interface_addresses
@@ -97,6 +98,14 @@ class BackendDiscovery:
             name, url = str(message["name"]), str(message["url"])
             if not name or not url.startswith(("http://", "https://")):
                 return
+            # The address observed on the UDP packet is routable on the exact
+            # interface that delivered discovery. Prefer it over advertised
+            # hostnames, which commonly exist only in the peer's local DNS.
+            parsed = urlsplit(url)
+            port = parsed.port
+            host = f"[{address}]" if ":" in address else address
+            netloc = f"{host}:{port}" if port else host
+            url = urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, "")).rstrip("/")
         except (KeyError, TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
             return
         self.peers[peer_id] = Peer(peer_id, name[:80], url, address, time.monotonic())

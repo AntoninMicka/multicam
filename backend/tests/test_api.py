@@ -147,6 +147,25 @@ def test_leader_targets_only_paired_followers(monkeypatch) -> None:
     }]
 
 
+def test_follower_prefers_live_discovery_url_for_leader(monkeypatch) -> None:
+    leader_id = "11111111-1111-4111-8111-111111111111"
+    monkeypatch.setattr(federation, "token", "x" * 32)
+    monkeypatch.setattr(federation, "role", "follower")
+    monkeypatch.setattr(federation, "leader_backend_id", leader_id)
+    monkeypatch.setattr(federation, "leader_url", "https://stale-hostname:8000")
+    monkeypatch.setattr("app.federation.discovery.snapshot", lambda: [{
+        "backend_id": leader_id, "url": "https://10.10.0.1:8000", "name": "leader",
+    }])
+    called = {}
+
+    async def fake_post(peer_url, path, payload):
+        called["url"] = peer_url
+
+    monkeypatch.setattr(federation, "post_json", fake_post)
+    asyncio.run(federation.send_to_leader("/test", {}))
+    assert called["url"] == "https://10.10.0.1:8000"
+
+
 def test_create_session_and_register_device() -> None:
     response = asyncio.run(request("POST", "/api/sessions", json={"name": "Test"}))
     assert response.status_code == 201
