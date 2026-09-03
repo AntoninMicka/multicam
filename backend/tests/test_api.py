@@ -119,6 +119,34 @@ def test_pairing_offer_is_one_time_and_persists_config(monkeypatch) -> None:
     })).status_code == 400
 
 
+def test_invalid_peer_does_not_consume_pairing_offer(monkeypatch) -> None:
+    monkeypatch.setattr(federation, "token", "")
+    offer = asyncio.run(request("POST", "/api/federation/pair/offer")).json()
+    invalid = asyncio.run(request("POST", "/api/federation/pair/accept", json={
+        "code": offer["pairing_code"], "peer_backend_id": "not-a-uuid", "peer_url": "file:///tmp",
+    }))
+    assert invalid.status_code == 400
+    peer_id = "11111111-1111-4111-8111-111111111111"
+    accepted = asyncio.run(request("POST", "/api/federation/pair/accept", json={
+        "code": offer["pairing_code"], "peer_backend_id": peer_id, "peer_url": "https://10.10.0.2:8000",
+    }))
+    assert accepted.status_code == 200
+
+
+def test_leader_targets_only_paired_followers(monkeypatch) -> None:
+    paired_id = "11111111-1111-4111-8111-111111111111"
+    stranger_id = "22222222-2222-4222-8222-222222222222"
+    monkeypatch.setattr(federation, "role", "leader")
+    monkeypatch.setattr(federation, "followers", {paired_id: "https://stored-paired:8000"})
+    monkeypatch.setattr("app.federation.discovery.snapshot", lambda: [
+        {"backend_id": paired_id, "url": "https://live-paired:8000", "name": "paired"},
+        {"backend_id": stranger_id, "url": "https://stranger:8000", "name": "stranger"},
+    ])
+    assert federation.target_peers() == [{
+        "backend_id": paired_id, "url": "https://live-paired:8000", "name": "paired",
+    }]
+
+
 def test_create_session_and_register_device() -> None:
     response = asyncio.run(request("POST", "/api/sessions", json={"name": "Test"}))
     assert response.status_code == 201

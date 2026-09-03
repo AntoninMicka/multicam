@@ -6,7 +6,9 @@ from app.zerotier import ZeroTierError, join
 
 
 def test_network_id_is_optional_only_for_install(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("app.zerotier.shutil.which", lambda command: None)
+    # _executable also searches the usual sbin directories explicitly, so the
+    # test must isolate that adapter rather than only PATH lookup.
+    monkeypatch.setattr("app.zerotier._executable", lambda command: None)
     with pytest.raises(ZeroTierError, match="Network ID povinné"):
         join("", tmp_path, install=False)
     with pytest.raises(ZeroTierError, match="Chybí pkexec") as error:

@@ -145,11 +145,20 @@ class Federation:
             if not matched and self.leader_url:
                 return [{"backend_id": self.leader_backend_id, "url": self.leader_url, "name": "leader"}]
             return matched
-        by_id = {peer["backend_id"]: peer for peer in peers}
         if self.role == "leader":
+            # Discovery is deliberately unauthenticated.  Never turn every
+            # backend visible on the LAN/ZeroTier network into a federation
+            # target; only explicitly paired followers may receive control
+            # messages, deletion requests, snapshots or media.
+            by_id = {
+                peer["backend_id"]: peer
+                for peer in peers
+                if peer["backend_id"] in self.followers
+            }
             for backend_id, url in self.followers.items():
                 by_id.setdefault(backend_id, {"backend_id": backend_id, "url": url, "name": "follower"})
-        return list(by_id.values())
+            return list(by_id.values())
+        return peers
 
     def direct_transfer_peers(self) -> list[dict]:
         """Peers currently observed by discovery; never use a stale URL for media."""

@@ -220,8 +220,14 @@ async def join_pairing_offer(request: Request) -> dict:
 async def accept_pairing_offer(request: Request) -> dict:
     data = await request.json()
     try:
+        # Validate the peer before consuming the one-time code. A malformed
+        # request must not be able to burn a legitimate operator's offer.
+        peer_backend_id = str(UUID(data["peer_backend_id"]))
+        peer_url = str(data["peer_url"])
+        if not peer_url.startswith(("http://", "https://")):
+            raise ValueError("Follower URL must use HTTP or HTTPS")
         token = federation.accept_pairing(str(data.get("code", "")))
-        federation.register_follower(str(UUID(data["peer_backend_id"])), str(data["peer_url"]))
+        federation.register_follower(peer_backend_id, peer_url)
     except (KeyError, ValueError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return {
