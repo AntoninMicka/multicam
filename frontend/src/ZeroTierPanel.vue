@@ -40,7 +40,7 @@ onMounted(refresh)
 <template>
   <section class="zerotier-panel">
     <details>
-      <summary><span><span class="eyebrow">páteřní síť</span><strong>ZeroTier</strong></span><span :class="['state', { online: status.online, unknown: status.installed && status.status_available === false }]">{{ !status.installed ? 'nenainstalován' : status.status_available === false ? 'stav nedostupný' : status.online ? 'online' : 'offline' }}</span></summary>
+      <summary><span><span class="eyebrow">páteřní síť</span><strong>ZeroTier</strong></span><span :class="['state', { online: status.online, unknown: status.installed && !status.online && status.status_available === false }]">{{ !status.installed ? 'nenainstalován' : status.online ? 'online' : status.status_available === false ? 'bez adresy' : 'offline' }}</span></summary>
       <div class="toolbar"><small v-if="status.node_id">Node {{ status.node_id }} · {{ status.version }}</small><button class="small secondary" @click="refresh">Obnovit</button></div>
       <small v-if="status.cli_path" class="muted">CLI: {{ status.cli_path }}</small>
       <p v-if="status.detail" class="muted">{{ status.detail }}</p>

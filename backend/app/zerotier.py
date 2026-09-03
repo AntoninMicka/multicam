@@ -9,6 +9,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .network import interface_addresses
+
 NETWORK_ID = re.compile(r"^[0-9a-fA-F]{16}$")
 EXECUTABLE_DIRS = ("/usr/sbin", "/usr/local/sbin", "/usr/bin", "/usr/local/bin", "/sbin")
 
@@ -57,6 +59,27 @@ def _run(command: list[str], timeout: int = 15) -> subprocess.CompletedProcess[s
     return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
 
 
+def _visible_networks(network_id: str | None) -> list[dict]:
+    """Describe ZeroTier interfaces without access to the daemon auth token."""
+    grouped: dict[str, list[str]] = {}
+    for item in interface_addresses():
+        if item["interface"].startswith("zt"):
+            grouped.setdefault(item["interface"], []).append(item["address"])
+    # An interface can briefly exist before an address is assigned. Preserve it
+    # in the diagnostic output, but only an addressed interface proves usable
+    # IP connectivity.
+    for path in Path("/sys/class/net").glob("zt*"):
+        grouped.setdefault(path.name, [])
+    return [{
+        "id": network_id or interface,
+        "name": "uložená ZeroTier síť" if network_id else "ZeroTier síť",
+        "status": "OK" if addresses else "čeká na adresu",
+        "type": None,
+        "interface": interface,
+        "addresses": addresses,
+    } for interface, addresses in sorted(grouped.items())]
+
+
 def status() -> dict:
     remembered = remembered_network_id()
     cli = _executable("zerotier-cli")
@@ -70,14 +93,19 @@ def status() -> dict:
     if info.returncode or networks.returncode:
         detail = (info.stderr or networks.stderr or info.stdout or networks.stdout).strip()
         access_denied = "authtoken.secret" in detail or "permission denied" in detail.lower()
+        visible = _visible_networks(remembered) if access_denied else []
+        inferred_online = any(network["addresses"] for network in visible)
         return {
-            "installed": True, "online": False, "networks": [],
+            "installed": True, "online": inferred_online, "networks": visible,
             "status_available": not access_denied,
             "remembered_network_id": remembered,
             "cli_path": cli,
             "detail": (
-                "ZeroTier je nainstalovaný, ale MultiCam nemá oprávnění načíst stav služby. "
-                "Tunel může být online; ověřte jej příkazem sudo zerotier-cli info."
+                "Stav byl určen podle lokálního ZeroTier rozhraní; podrobnosti daemonu "
+                "nejsou bez administrátorského oprávnění dostupné."
+                if inferred_online else
+                "ZeroTier je nainstalovaný, ale MultiCam nevidí rozhraní s přidělenou IP. "
+                "Ověřte autorizaci sítě příkazem sudo zerotier-cli listnetworks."
                 if access_denied else detail or
                 "ZeroTier je nainstalovaný, ale CLI není dostupné pro tohoto uživatele. Zkontrolujte službu zerotier-one a oprávnění."
             ),

@@ -38,10 +38,26 @@ def test_status_distinguishes_missing_cli_permission_from_offline(monkeypatch) -
     monkeypatch.setattr(zerotier, "_run", lambda command: __import__("subprocess").CompletedProcess(
         command, 1, "", "authtoken.secret not found or readable",
     ))
+    monkeypatch.setattr(zerotier, "_visible_networks", lambda network_id: [])
     result = status()
     assert result["installed"] is True
     assert result["status_available"] is False
-    assert "Tunel může být online" in result["detail"]
+    assert "nevidí rozhraní" in result["detail"]
+
+
+def test_status_infers_online_from_addressed_zerotier_interface(monkeypatch) -> None:
+    from app import zerotier
+    monkeypatch.setattr(zerotier, "_executable", lambda name: "/usr/sbin/zerotier-cli")
+    monkeypatch.setattr(zerotier, "_run", lambda command: __import__("subprocess").CompletedProcess(
+        command, 1, "", "authtoken.secret not readable",
+    ))
+    monkeypatch.setattr(zerotier, "_visible_networks", lambda network_id: [{
+        "id": network_id or "ztabc", "name": "ZeroTier síť", "status": "OK",
+        "interface": "ztabc", "addresses": ["10.10.0.2"],
+    }])
+    result = status()
+    assert result["online"] is True
+    assert result["networks"][0]["addresses"] == ["10.10.0.2"]
 
 
 def test_successful_join_remembers_network_id(tmp_path: Path, monkeypatch) -> None:
