@@ -123,6 +123,19 @@ video i telemetrii všech svých telefonů, odešle kontrolovaně zabalenou lok�
 část klapky druhému notebooku. Import kontroluje velikosti a SHA-256 a je
 idempotentní.
 
+Federace je autoritativní: pult, který vytvoří párovací QR/kód, se stane
+`leader`, připojený pult `follower`. Leader jako jediný vytváří, maže a přepíná
+aktivní relaci; follower tento stav automaticky převezme. Řídicí povely z
+followeru (včetně povelu z hlavní kamery) procházejí přes leader. V celé
+federaci smí být právě jedna hlavní a jedna top-down kamera, nezávisle na tom,
+ke kterému notebooku jsou připojené. Živé náhledy se mezi backendy neposílají a
+zůstávají jen na pultu příslušného telefonu.
+
+Po ověření lokálních uploadů posílá follower svou část klapky leaderu s trvalým
+retry stavem. Opačný směr je vypnutý, dokud leader v UI nezapne **Zálohu na
+follower**. Potlačení federačních přenosů zastaví oba směry, nikoli řídicí
+povely ani synchronizaci relací.
+
 U nalezeného pultu se zobrazuje jeho aktivní relace a tlačítko pro připojení
 lokálního pultu. Relace lze odstranit ze seznamu; po potvrzení se smažou její
 manifesty, záznamy a odvozené soubory na obou dostupných federovaných pultech.

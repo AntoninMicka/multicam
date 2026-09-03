@@ -30,6 +30,9 @@ class ConnectionManager:
         for connection in dead:
             self.disconnect(session_id, connection)
 
+    async def broadcast_all(self, message: dict) -> None:
+        for session_id in list(self._connections):
+            await self.broadcast(session_id, message)
+
 
 connections = ConnectionManager()
-

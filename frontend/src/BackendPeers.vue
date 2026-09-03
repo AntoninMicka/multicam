@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import QRCode from 'qrcode'
-import { createPairingOffer, getBackends, getFederationConfig, joinPairingOffer, setFederationTransfer, type BackendInfo } from './api'
+import { createPairingOffer, getBackends, getFederationConfig, joinPairingOffer, setFederationBackup, setFederationTransfer, type BackendInfo } from './api'
 
 const emit = defineEmits<{ (event: 'join-session', sessionId: string): void }>()
 
@@ -18,6 +18,8 @@ const pairingMessage = ref('')
 const scanInput = ref<HTMLInputElement | null>(null)
 const lastSyncAt = ref<string | null>(null)
 const syncError = ref<string | null>(null)
+const federationRole = ref<'standalone' | 'leader' | 'follower'>('standalone')
+const backupToFollower = ref(false)
 let timer = 0
 
 async function refresh() {
@@ -30,6 +32,8 @@ async function refresh() {
     const config = await getFederationConfig()
     lastSyncAt.value = config.last_sync_at
     syncError.value = config.last_error
+    federationRole.value = config.role
+    backupToFollower.value = config.backup_to_follower
     error.value = ''
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Discovery backendů není dostupné.'
@@ -87,6 +91,15 @@ async function toggleTransfer() {
   }
 }
 
+async function toggleBackup() {
+  try {
+    const result = await setFederationBackup(!backupToFollower.value)
+    backupToFollower.value = result.backup_to_follower
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'Nastavení zálohy nelze uložit.'
+  }
+}
+
 onMounted(() => {
   void refresh()
   timer = window.setInterval(refresh, 5000)
@@ -96,7 +109,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
 
 <template>
   <div class="backend-peers">
-    <div><strong>Backend: {{ own?.name ?? 'načítám…' }}</strong><small v-if="own">{{ own.url }}</small><small v-if="federationEnabled">Federace aktivní · přenos záznamů {{ transferEnabled ? 'zapnutý' : 'potlačený' }}</small><small v-else>Jen discovery · federace není nakonfigurovaná</small><small v-if="lastSyncAt">Poslední synchronizace: {{ new Date(lastSyncAt).toLocaleTimeString() }}</small><small v-if="syncError" class="sync-error">Synchronizace selhala: {{ syncError }}</small></div>
+    <div><strong>Backend: {{ own?.name ?? 'načítám…' }}</strong><small v-if="own">{{ own.url }}</small><small v-if="federationEnabled">Federace {{ federationRole }} · přenos záznamů {{ transferEnabled ? 'zapnutý' : 'potlačený' }}</small><small v-else>Jen discovery · federace není nakonfigurovaná</small><small v-if="lastSyncAt">Poslední synchronizace: {{ new Date(lastSyncAt).toLocaleTimeString() }}</small><small v-if="syncError" class="sync-error">Synchronizace selhala: {{ syncError }}</small></div>
     <span v-if="error" class="muted">{{ error }}</span>
     <span v-else-if="!peers.length" class="muted">Další pult nenalezen</span>
     <a v-for="peer in peers" :key="peer.backend_id" :href="peer.url" target="_blank" rel="noopener">
@@ -112,6 +125,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
         <button class="small secondary" @click="scanInput?.click()">Načíst QR z obrázku</button>
         <input ref="scanInput" type="file" accept="image/*" capture="environment" hidden @change="scanImage">
         <button v-if="federationEnabled" class="small secondary" @click="toggleTransfer">{{ transferEnabled ? 'Potlačit přenos záznamů' : 'Povolit přenos záznamů' }}</button>
+        <button v-if="federationRole === 'leader'" class="small secondary" @click="toggleBackup">{{ backupToFollower ? 'Vypnout zálohu na follower' : 'Zapnout zálohu na follower' }}</button>
       </div>
       <figure v-if="pairingQr"><img :src="pairingQr" alt="Jednorázový QR pro spárování pultů"><figcaption>Načtěte na druhém pultu</figcaption></figure>
       <p v-if="pairingCode" class="pairing-code"><small>Párovací kód</small><strong>{{ pairingCode.slice(0, 5) }}-{{ pairingCode.slice(5) }}</strong></p>

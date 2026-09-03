@@ -23,6 +23,10 @@ class Federation:
         except (OSError, ValueError, TypeError):
             saved = {}
         self.token = os.getenv("MULTICAM_FEDERATION_TOKEN", saved.get("token", ""))
+        self.role = os.getenv("MULTICAM_FEDERATION_ROLE", saved.get("role", "standalone"))
+        self.leader_url = os.getenv("MULTICAM_FEDERATION_LEADER_URL", saved.get("leader_url"))
+        self.leader_backend_id = saved.get("leader_backend_id")
+        self.backup_to_follower = os.getenv("MULTICAM_FEDERATION_BACKUP", "1" if saved.get("backup_to_follower") else "0") == "1"
         configured_transfer = os.getenv("MULTICAM_FEDERATION_TRANSFER")
         self.transfer_enabled = configured_transfer != "0" if configured_transfer is not None else saved.get("transfer_enabled", True)
         configured_verify = os.getenv("MULTICAM_FEDERATION_TLS_VERIFY")
@@ -54,23 +58,34 @@ class Federation:
         temporary = self.config_path.with_suffix(".tmp")
         temporary.write_text(json.dumps({
             "token": self.token, "transfer_enabled": self.transfer_enabled, "tls_verify": self.tls_verify,
+            "role": self.role, "leader_url": self.leader_url,
+            "leader_backend_id": self.leader_backend_id,
+            "backup_to_follower": self.backup_to_follower,
         }), encoding="utf-8")
         os.chmod(temporary, 0o600)
         os.replace(temporary, self.config_path)
 
-    def configure(self, *, token: str | None = None, transfer_enabled: bool | None = None) -> None:
+    def configure(
+        self, *, token: str | None = None, transfer_enabled: bool | None = None,
+        backup_to_follower: bool | None = None,
+    ) -> None:
         if token is not None:
             if len(token) < 32:
                 raise ValueError("Federation token must have at least 32 characters")
             self.token = token
         if transfer_enabled is not None:
             self.transfer_enabled = transfer_enabled
+        if backup_to_follower is not None:
+            self.backup_to_follower = backup_to_follower
         self.save()
 
     def create_pairing_offer(self) -> str:
         import time
         if not self.token:
             self.token = secrets.token_urlsafe(32)
+        self.role = "leader"
+        self.leader_url = discovery.advertised_url()
+        self.leader_backend_id = discovery.backend_id
         self.save()
         # 10 characters from an unambiguous 32-character alphabet = 50 bits.
         alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -99,6 +114,9 @@ class Federation:
                 return json.loads(response.read())
         response = await asyncio.to_thread(exchange)
         self.tls_verify = False
+        self.role = "follower"
+        self.leader_url = response.get("leader_url", url).rstrip("/")
+        self.leader_backend_id = response["leader_backend_id"]
         self.configure(token=response["token"])
 
     def mark_sync_ok(self) -> None:
@@ -114,6 +132,15 @@ class Federation:
         ), return_exceptions=True)
         if not results or all(isinstance(result, Exception) for result in results):
             raise ValueError("No discovered backend accepted the pairing code")
+
+    def target_peers(self) -> list[dict]:
+        peers = discovery.snapshot()
+        if self.role == "follower" and self.leader_backend_id:
+            matched = [peer for peer in peers if peer["backend_id"] == self.leader_backend_id]
+            if not matched and self.leader_url:
+                return [{"backend_id": self.leader_backend_id, "url": self.leader_url, "name": "leader"}]
+            return matched
+        return peers
 
     def _request(self, url: str, *, data: bytes | None = None, content_type: str = "application/json") -> bytes:
         request = urllib.request.Request(url, data=data, headers={
@@ -131,7 +158,12 @@ class Federation:
 
     async def broadcast_json(self, path: str, payload: dict) -> None:
         if self.enabled:
-            await asyncio.gather(*(self.post_json(peer["url"], path, payload) for peer in discovery.snapshot()), return_exceptions=True)
+            await asyncio.gather(*(self.post_json(peer["url"], path, payload) for peer in self.target_peers()), return_exceptions=True)
+
+    async def send_to_leader(self, path: str, payload: dict) -> None:
+        if not self.enabled or self.role != "follower" or not self.leader_url:
+            raise ValueError("Leader is not configured")
+        await self.post_json(self.leader_url, path, payload)
 
     async def send_bundle(self, peer_url: str, path: Path, session_id: str, take_id: str) -> None:
         if not self.enabled or not self.transfer_enabled:

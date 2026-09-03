@@ -27,6 +27,9 @@ export interface FederationConfig {
   tls_verify: boolean
   last_sync_at: string | null
   last_error: string | null
+  role: 'standalone' | 'leader' | 'follower'
+  leader_backend_id: string | null
+  backup_to_follower: boolean
 }
 
 export function getBackends(): Promise<BackendStatus> {
@@ -52,6 +55,12 @@ export function joinPairingOffer(value: string): Promise<FederationConfig> {
 export function setFederationTransfer(transferEnabled: boolean): Promise<FederationConfig> {
   return fetch('/api/federation/config', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transfer_enabled: transferEnabled }),
+  }).then(json<FederationConfig>)
+}
+
+export function setFederationBackup(backupToFollower: boolean): Promise<FederationConfig> {
+  return fetch('/api/federation/config', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ backup_to_follower: backupToFollower }),
   }).then(json<FederationConfig>)
 }
 

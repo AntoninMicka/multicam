@@ -12,9 +12,10 @@
 7. **Discovery backendů** – periodický UDP heartbeat na `239.255.77.77:47777`;
    funguje v LAN i nad virtuálním rozhraním ZeroTier. Jde pouze o nalezení pultů,
    relace a úložiště zůstávají vlastnictvím konkrétního backendu.
-8. **Federace pultů** – autentizovaný řídicí kanál replikuje relace, zařízení a
-   povely okamžitě. Datový kanál se spustí až po lokálním ověření celé klapky a
-   lze jej vypnout nezávisle přes `MULTICAM_FEDERATION_TRANSFER=0`.
+8. **Federace pultů** – leader je autoritou pro relace, aktivní relaci, globálně
+   unikátní hlavní/top-down roli a řídicí povely. Follower replikuje lokálně
+   ověřené záznamy leaderu přes trvalou retry frontu. Opačný směr je volitelná
+   záloha; živé náhledy zůstávají lokální.
 
 ## Datový tok
 

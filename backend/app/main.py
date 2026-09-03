@@ -109,6 +109,7 @@ async def list_backends() -> dict:
         "discovery_enabled": discovery.enabled,
         "federation_enabled": federation.enabled,
         "transfer_enabled": federation.transfer_enabled,
+        "federation_role": federation.role,
     }
 
 
@@ -131,6 +132,9 @@ async def federation_config() -> dict:
         "tls_verify": federation.tls_verify,
         "last_sync_at": federation.last_sync_at,
         "last_error": federation.last_error,
+        "role": federation.role,
+        "leader_backend_id": federation.leader_backend_id,
+        "backup_to_follower": federation.backup_to_follower,
     }
 
 
@@ -142,6 +146,7 @@ async def update_federation_config(request: Request) -> dict:
         federation.configure(
             token=data.get("token"),
             transfer_enabled=data.get("transfer_enabled"),
+            backup_to_follower=data.get("backup_to_follower"),
         )
     except (OSError, ValueError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -188,7 +193,10 @@ async def accept_pairing_offer(request: Request) -> dict:
         token = federation.accept_pairing(str((await request.json()).get("code", "")))
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    return {"token": token}
+    return {
+        "token": token, "leader_backend_id": discovery.backend_id,
+        "leader_url": discovery.advertised_url(),
+    }
 
 
 @app.get("/api/federation/snapshot")
@@ -219,11 +227,48 @@ async def federation_control(request: Request, x_multicam_federation: str | None
     return {"accepted": True}
 
 
+@app.post("/api/federation/control-request")
+async def federation_control_request(request: Request, x_multicam_federation: str | None = Header(default=None)) -> dict:
+    require_federation_token(x_multicam_federation)
+    if federation.role != "leader":
+        raise HTTPException(status_code=409, detail="Control requests must be handled by the leader")
+    data = await request.json()
+    await apply_control(UUID(data["session_id"]), SocketMessage.model_validate(data["message"]), relay=True)
+    return {"accepted": True}
+
+
+@app.post("/api/federation/validate-role")
+async def federation_validate_role(request: Request, x_multicam_federation: str | None = Header(default=None)) -> dict:
+    require_federation_token(x_multicam_federation)
+    if federation.role != "leader":
+        raise HTTPException(status_code=409, detail="Role validation is only available on the leader")
+    data = await request.json()
+    session = await store.get(UUID(data["session_id"]))
+    role = DeviceRole(data["role"])
+    if role in {DeviceRole.MAIN_CAMERA, DeviceRole.TOP_CAMERA}:
+        occupied = next((device for device in session.devices.values() if device.role == role and str(device.device_id) != data.get("device_id")), None)
+        if occupied:
+            raise HTTPException(status_code=409, detail=f"Role {role.value} už používá {occupied.name}")
+    return {"accepted": True}
+
+
 @app.post("/api/federation/event")
 async def federation_event(request: Request, x_multicam_federation: str | None = Header(default=None)) -> dict:
     require_federation_token(x_multicam_federation)
     data = await request.json()
-    await connections.broadcast(UUID(data["session_id"]), SocketMessage.model_validate(data["message"]).model_dump(mode="json"))
+    session_id = UUID(data["session_id"])
+    message = SocketMessage.model_validate(data["message"])
+    if federation.role == "leader" and message.type == "control.ack" and message.payload.get("device_id"):
+        ack_state = {
+            "ready": DeviceState.ARMED, "started": DeviceState.RECORDING,
+            "stopped": DeviceState.STORED, "error": DeviceState.READY,
+        }.get(message.payload.get("status"))
+        if ack_state is not None:
+            try:
+                await store.set_device_state(session_id, UUID(message.payload["device_id"]), ack_state)
+            except (SessionNotFoundError, KeyError):
+                pass
+    await connections.broadcast(session_id, message.model_dump(mode="json"))
     return {"accepted": True}
 
 
@@ -256,16 +301,18 @@ async def federation_take(
 async def federation_sync_loop() -> None:
     while True:
         if federation.enabled:
-            for peer in discovery.snapshot():
+            for peer in federation.target_peers():
                 try:
                     snapshot = await federation.get_snapshot(peer["url"])
-                    for deleted_id in snapshot.get("deleted_session_ids", []):
-                        remote_deleted = UUID(deleted_id)
-                        if remote_deleted not in deleted_session_ids:
-                            try:
-                                await delete_session_data(remote_deleted, relay=False)
-                            except HTTPException:
-                                pass
+                    authoritative = federation.role == "follower" and snapshot["backend_id"] == federation.leader_backend_id
+                    if authoritative:
+                        for deleted_id in snapshot.get("deleted_session_ids", []):
+                            remote_deleted = UUID(deleted_id)
+                            if remote_deleted not in deleted_session_ids:
+                                try:
+                                    await delete_session_data(remote_deleted, relay=False)
+                                except HTTPException:
+                                    pass
                     remote_sessions = [Session.model_validate(raw) for raw in snapshot["sessions"]]
                     active_state = snapshot.get("active_session")
                     active_id = UUID(active_state["session_id"]) if active_state else None
@@ -274,13 +321,23 @@ async def federation_sync_loop() -> None:
                     for remote in remote_sessions:
                         if remote.session_id in deleted_session_ids:
                             continue
-                        merged = await store.merge_remote(remote, snapshot["backend_id"], discovery.backend_id)
+                        try:
+                            merged = await store.merge_remote(
+                                remote, snapshot["backend_id"], discovery.backend_id,
+                                authoritative=authoritative,
+                            )
+                        except SessionNotFoundError:
+                            continue
                         await connections.broadcast(merged.session_id, {"type": "session.updated", "payload": merged.model_dump(mode="json")})
-                    if active_state and active_id:
+                    if authoritative and active_state and active_id:
                         await store.activate(
                             active_id, active_state.get("backend_id") or snapshot["backend_id"],
-                            datetime.fromisoformat(active_state["changed_at"]),
+                            datetime.fromisoformat(active_state["changed_at"]), force=True,
                         )
+                        await connections.broadcast_all({
+                            "type": "federation.active_session",
+                            "payload": {"session_id": str(active_id)},
+                        })
                     await sync_completed_takes(peer)
                     federation.mark_sync_ok()
                 except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
@@ -305,11 +362,15 @@ async def network_interfaces() -> dict:
 
 @app.post("/api/sessions", response_model=Session, status_code=status.HTTP_201_CREATED)
 async def create_session(data: SessionCreate) -> Session:
+    if federation.enabled and federation.role == "follower":
+        raise HTTPException(status_code=409, detail="Relace vytváří řídicí pult (leader)")
     return await store.create(data)
 
 
 @app.post("/api/sessions/{session_id}/activate", response_model=Session)
 async def activate_session(session_id: UUID) -> Session:
+    if federation.enabled and federation.role == "follower":
+        raise HTTPException(status_code=409, detail="Aktivní relaci určuje řídicí pult (leader)")
     try:
         return await store.activate(session_id, discovery.backend_id)
     except SessionNotFoundError as error:
@@ -336,6 +397,8 @@ async def delete_session_data(session_id: UUID, *, relay: bool) -> None:
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: UUID) -> dict:
+    if federation.enabled and federation.role == "follower":
+        raise HTTPException(status_code=409, detail="Relaci může smazat pouze řídicí pult (leader)")
     await delete_session_data(session_id, relay=True)
     return {"deleted": True, "session_id": str(session_id)}
 
@@ -363,6 +426,20 @@ async def get_session(session_id: UUID) -> Session:
 
 @app.post("/api/sessions/{session_id}/devices", response_model=Device, status_code=status.HTTP_201_CREATED)
 async def register_device(session_id: UUID, data: DeviceRegistration) -> Device:
+    if data.role in {DeviceRole.MAIN_CAMERA, DeviceRole.TOP_CAMERA}:
+        if federation.enabled and federation.role == "follower":
+            try:
+                await federation.send_to_leader("/api/federation/validate-role", {
+                    "session_id": str(session_id), "role": data.role.value,
+                    "device_id": str(data.device_id) if data.device_id else None,
+                })
+            except Exception as error:
+                raise HTTPException(status_code=409, detail="Tato unikátní role je už obsazená nebo leader není dostupný") from error
+        else:
+            session = await store.get(session_id)
+            occupied = next((device for device in session.devices.values() if device.role == data.role and device.device_id != data.device_id), None)
+            if occupied:
+                raise HTTPException(status_code=409, detail=f"Tuto roli už používá {occupied.name}")
     try:
         device = await store.register_device(session_id, data, discovery.backend_id)
     except SessionNotFoundError as error:
@@ -460,6 +537,14 @@ async def complete_upload(session_id: UUID, device_id: UUID, upload_id: UUID) ->
 
 
 async def replicate_completed_take(session_id: UUID, take_id: UUID) -> None:
+    peers = federation.target_peers()
+    if federation.role == "leader" and not federation.backup_to_follower:
+        return
+    for peer in peers:
+        await replicate_take_to_peer(session_id, take_id, peer)
+
+
+async def replicate_take_to_peer(session_id: UUID, take_id: UUID, peer: dict) -> None:
     session = await store.get(session_id)
     report = uploads.build_report(session)
     take = next((item for item in report["takes"] if item["take_id"] == str(take_id)), None)
@@ -473,12 +558,33 @@ async def replicate_completed_take(session_id: UUID, take_id: UUID) -> None:
     }
     if not local_ids:
         return
+    receipt = uploads.root / str(session_id) / ".federation-sent" / f"{take_id}-{peer['backend_id']}.json"
+    if receipt.is_file():
+        return
     destination = uploads.root / ".federation" / f"{session_id}-{take_id}-{discovery.backend_id}.zip"
     await asyncio.to_thread(export_take, uploads.root, session_id, take_id, local_ids, destination)
-    await asyncio.gather(*(
-        federation.send_bundle(peer["url"], destination, str(session_id), str(take_id))
-        for peer in discovery.snapshot()
-    ), return_exceptions=True)
+    await federation.send_bundle(peer["url"], destination, str(session_id), str(take_id))
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    temporary = receipt.with_suffix(".tmp")
+    temporary.write_text(json.dumps({
+        "peer_backend_id": peer["backend_id"], "take_id": str(take_id),
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+    }), encoding="utf-8")
+    os.replace(temporary, receipt)
+
+
+async def sync_completed_takes(peer: dict) -> None:
+    if not federation.transfer_enabled:
+        return
+    if federation.role == "follower" and peer["backend_id"] != federation.leader_backend_id:
+        return
+    if federation.role == "leader" and not federation.backup_to_follower:
+        return
+    for session in await store.list():
+        report = uploads.build_report(session)
+        for take in report["takes"]:
+            if take["complete"]:
+                await replicate_take_to_peer(session.session_id, UUID(take["take_id"]), peer)
 
 
 @app.get("/api/sessions/{session_id}/media", response_model=list[CaptureMedia])
@@ -659,14 +765,14 @@ async def get_recording_telemetry(session_id: UUID, device_id: UUID, capture_id:
 
 async def apply_control(session_id: UUID, message: SocketMessage, *, relay: bool) -> None:
     current = await store.get(session_id)
-    local_devices = [
+    controlled_devices = list(current.devices.values()) if federation.role == "leader" else [
         device for device in current.devices.values()
         if not device.owner_backend_id or device.owner_backend_id == discovery.backend_id
     ]
     if message.type == "control.arm":
         session = await store.set_state(session_id, SessionState.ARMED)
     elif message.type == "recording.start":
-        unready = [device.name for device in local_devices if device.connected and device.state != DeviceState.ARMED]
+        unready = [device.name for device in controlled_devices if device.connected and device.state != DeviceState.ARMED]
         if unready:
             raise HTTPException(status_code=409, detail=f"Kamery bez ARM: {', '.join(unready)}")
         message.payload.setdefault("take_id", str(uuid4()))
@@ -715,11 +821,21 @@ async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID
                 continue
             if message.type in {"control.arm", "recording.start", "recording.stop"}:
                 try:
-                    await apply_control(session_id, message, relay=True)
+                    if federation.enabled and federation.role == "follower":
+                        await federation.send_to_leader("/api/federation/control-request", {
+                            "session_id": str(session_id), "message": message.model_dump(mode="json"),
+                        })
+                    else:
+                        await apply_control(session_id, message, relay=True)
                 except HTTPException as control_error:
                     await websocket.send_json({
                         "type": "control.rejected",
                         "payload": {"command_id": message.payload.get("command_id"), "detail": control_error.detail},
+                    })
+                except Exception:
+                    await websocket.send_json({
+                        "type": "control.rejected",
+                        "payload": {"command_id": message.payload.get("command_id"), "detail": "Řídicí pult není dostupný."},
                     })
                 continue
             if message.type == "clock.report" and device_id is not None:

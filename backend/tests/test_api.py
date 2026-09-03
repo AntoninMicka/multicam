@@ -24,11 +24,18 @@ def isolated_storage(tmp_path) -> None:
     root = tmp_path / "sessions"
     store._sessions.clear()
     store.root = root
+    store.active_session_id = None
+    store.active_changed_at = None
+    store.active_backend_id = None
     uploads.root = root
     federation.config_path = tmp_path / "federation.json"
     federation.token = ""
     federation.transfer_enabled = True
     federation.tls_verify = True
+    federation.role = "standalone"
+    federation.leader_url = None
+    federation.leader_backend_id = None
+    federation.backup_to_follower = False
     deleted_session_ids.clear()
 
 
@@ -75,6 +82,7 @@ def test_pairing_offer_is_one_time_and_persists_config(monkeypatch) -> None:
     monkeypatch.setattr(federation, "token", "")
     offer = asyncio.run(request("POST", "/api/federation/pair/offer"))
     assert offer.status_code == 200
+    assert federation.role == "leader"
     assert len(offer.json()["pairing_code"]) == 10
     assert offer.json()["pairing_code"].isalnum()
     from urllib.parse import parse_qs, urlparse
@@ -123,6 +131,16 @@ def test_create_session_and_register_device() -> None:
 def test_unknown_session_is_404() -> None:
     response = asyncio.run(request("GET", "/api/sessions/00000000-0000-0000-0000-000000000000"))
     assert response.status_code == 404
+
+
+def test_follower_cannot_create_or_activate_session(monkeypatch) -> None:
+    first = asyncio.run(request("POST", "/api/sessions", json={"name": "Leader session"})).json()
+    monkeypatch.setattr(federation, "token", "x" * 32)
+    monkeypatch.setattr(federation, "role", "follower")
+    refused = asyncio.run(request("POST", "/api/sessions", json={"name": "Follower session"}))
+    assert refused.status_code == 409
+    refused = asyncio.run(request("POST", f"/api/sessions/{first['session_id']}/activate"))
+    assert refused.status_code == 409
 
 
 def test_session_can_be_deleted_but_not_while_recording(monkeypatch) -> None:

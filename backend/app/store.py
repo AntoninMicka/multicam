@@ -152,11 +152,16 @@ class SessionStore:
             self._persist(session)
             return device.model_copy(deep=True)
 
-    async def merge_remote(self, remote: Session, remote_backend_id: str, local_backend_id: str) -> Session:
+    async def merge_remote(
+        self, remote: Session, remote_backend_id: str, local_backend_id: str,
+        *, authoritative: bool = False,
+    ) -> Session:
         """Merge only the devices owned by a remote backend into a shared session."""
         async with self._lock:
             session = self._sessions.get(remote.session_id)
             if session is None:
+                if not authoritative:
+                    raise SessionNotFoundError(remote.session_id)
                 session = remote.model_copy(deep=True)
                 session.devices = {}
                 self._sessions[session.session_id] = session
@@ -166,7 +171,9 @@ class SessionStore:
                     device.owner_backend_id = owner
                     session.devices[key] = device.model_copy(deep=True)
             # A remote snapshot must never overwrite local state.
-            session.state = remote.state
+            if authoritative:
+                session.name = remote.name
+                session.state = remote.state
             self._persist(session)
             return session.model_copy(deep=True)
 
@@ -205,14 +212,14 @@ class SessionStore:
 
     async def activate(
         self, session_id: UUID, backend_id: str | None = None,
-        changed_at: datetime | None = None,
+        changed_at: datetime | None = None, *, force: bool = False,
     ) -> Session:
         async with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
                 raise SessionNotFoundError(session_id)
             candidate = changed_at or utc_now()
-            if self.active_changed_at and changed_at and candidate <= self.active_changed_at:
+            if not force and self.active_changed_at and changed_at and candidate <= self.active_changed_at:
                 current = self._sessions.get(self.active_session_id)
                 return (current or session).model_copy(deep=True)
             self.active_session_id = session_id

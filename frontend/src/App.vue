@@ -6,6 +6,7 @@ import {
   analyzeSessionClaps,
   activateSession,
   getCurrentSession,
+  getFederationConfig,
   getSessionReport,
   getSession,
   listSessionMedia,
@@ -82,6 +83,7 @@ const activeCommandType = ref('')
 const operationalWarnings = ref<string[]>([])
 const clockMetrics = ref<Record<string, { offset_ms: number; rtt_ms: number }>>({})
 const livePreviewEnabled = ref(false)
+const federationRole = ref<'standalone' | 'leader' | 'follower'>('standalone')
 const previewFrames = ref<Record<string, { data_url: string; captured_at: string }>>({})
 let socket: WebSocket | null = null
 let commandTimeout: number | undefined
@@ -240,6 +242,10 @@ function connectSocket(id: string, cameraId?: string) {
       error.value = 'Relace byla smazána na propojeném pultu.'
       return
     }
+    if (message.type === 'federation.active_session' && role.value === 'director' && message.payload.session_id !== session.value?.session_id) {
+      await joinFederatedSession(message.payload.session_id)
+      return
+    }
     if (message.type === 'clap.trigger' && role.value !== 'director' && recording.value) {
       recordTelemetry('sync_marker', message.payload)
       if (!message.payload.target_device_id ? role.value === 'main_camera' : message.payload.target_device_id === deviceId.value) flashClap()
@@ -323,6 +329,7 @@ async function chooseRole(selectedRole: Role) {
   error.value = ''
   if (selectedRole === 'director') {
     try {
+      federationRole.value = (await getFederationConfig()).role
       availableSessions.value = await listSessions()
     } catch (reason) {
       error.value = reason instanceof Error ? reason.message : 'Seznam relací nelze načíst.'
@@ -333,7 +340,7 @@ async function chooseRole(selectedRole: Role) {
 }
 
 async function selectSession(selected: Session) {
-  await activateSession(selected.session_id)
+  if (federationRole.value !== 'follower') await activateSession(selected.session_id)
   session.value = await getSession(selected.session_id)
   connectSocket(selected.session_id)
   await loadSessionMedia()
@@ -921,12 +928,11 @@ onBeforeUnmount(() => {
           <h2>Relace</h2>
           <div v-for="item in availableSessions" :key="item.session_id" class="session-row">
             <button class="session-item" @click="selectSession(item)"><span>{{ item.name }}</span><small>{{ new Date(item.created_at).toLocaleString() }} · {{ Object.keys(item.devices).length }} kamer</small></button>
-            <button class="small stop" :disabled="item.state === 'recording'" @click="removeSession(item)">Smazat</button>
+            <button class="small stop" :disabled="item.state === 'recording' || federationRole === 'follower'" @click="removeSession(item)">Smazat</button>
           </div>
         </div>
-        <h2>Nová relace</h2>
-        <label>Název <input v-model="sessionName" /></label>
-        <button :disabled="busy" @click="startDirector">Založit relaci</button>
+        <template v-if="federationRole !== 'follower'"><h2>Nová relace</h2><label>Název <input v-model="sessionName" /></label><button :disabled="busy" @click="startDirector">Založit relaci</button></template>
+        <p v-else class="muted">Aktivní relaci vytváří a přepíná řídicí pult (leader).</p>
       </template>
       <template v-else>
         <h2>Připojit: {{ roleLabel(role) }}</h2>
@@ -958,10 +964,10 @@ onBeforeUnmount(() => {
         <button class="preview-toggle secondary" :disabled="!connectedDevices.length || session.state === 'recording'" @click="toggleLivePreview">{{ livePreviewEnabled ? 'Vypnout živé náhledy' : 'Zapnout živé náhledy' }}</button>
         <div class="record-controls">
           <template v-if="session.state !== 'recording'">
-            <button class="secondary" :disabled="!connectedDevices.length" @click="sendRecordingCommand('control.arm')">1. ARM · připravit kamery</button>
-            <button :disabled="!allCamerasArmed" @click="sendRecordingCommand('recording.start')">2. ● Spustit záznam</button>
+            <button class="secondary" :disabled="federationRole === 'follower' || !connectedDevices.length" @click="sendRecordingCommand('control.arm')">1. ARM · připravit kamery</button>
+            <button :disabled="federationRole === 'follower' || !allCamerasArmed" @click="sendRecordingCommand('recording.start')">2. ● Spustit záznam</button>
           </template>
-          <button v-else class="stop" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
+          <button v-else class="stop" :disabled="federationRole === 'follower'" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
         </div>
         <p v-if="activeCommandType && connectedDevices.length" class="muted">Potvrzení povelu: {{ Object.values(controlAcks).filter(ack => !['pending', 'timeout', 'error'].includes(ack.status)).length }}/{{ connectedDevices.length }}</p>
         <button class="clap-button" :disabled="!devices.some(device => device.role === 'main_camera' && device.connected)" @click="triggerClap">Spustit identifikační klapku</button>
