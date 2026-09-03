@@ -7,7 +7,9 @@ import json
 import logging
 import os
 import socket
+import ssl
 import time
+import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -143,6 +145,33 @@ class BackendDiscovery:
             "listening_interface_ips": self.multicast_interface_ips,
             "advertised_url": self.advertised_url(),
         }
+
+    async def application_ping(self) -> list[dict]:
+        targets = {peer.url for peer in self.peers.values()}
+        if self.last_source:
+            scheme = "https" if os.getenv("MULTICAM_HTTPS", "1") != "0" else "http"
+            targets.add(f"{scheme}://{self.last_source}:{os.getenv('MULTICAM_PORT', '8000')}")
+
+        def probe(base_url: str) -> dict:
+            started = time.monotonic()
+            try:
+                context = ssl._create_unverified_context() if base_url.startswith("https://") else None  # noqa: SLF001
+                with urllib.request.urlopen(f"{base_url.rstrip('/')}/api/health", timeout=3, context=context) as response:
+                    body = json.loads(response.read())
+                    healthy = response.status == 200 and body.get("status") == "ok"
+                return {
+                    "url": base_url, "ok": healthy,
+                    "latency_ms": round((time.monotonic() - started) * 1000, 1),
+                    "detail": "MultiCam odpověděl" if healthy else "Neplatná odpověď aplikace",
+                }
+            except Exception as error:
+                return {
+                    "url": base_url, "ok": False,
+                    "latency_ms": round((time.monotonic() - started) * 1000, 1),
+                    "detail": str(error) or error.__class__.__name__,
+                }
+
+        return await asyncio.gather(*(asyncio.to_thread(probe, target) for target in sorted(targets)))
 
     def snapshot(self) -> list[dict]:
         now = time.monotonic()

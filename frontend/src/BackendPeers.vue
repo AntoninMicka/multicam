@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { createPairingOffer, getBackends, getFederationConfig, getFederationTransfers, joinPairingOffer, setFederationBackup, setFederationTransfer, type BackendInfo } from './api'
+import { createPairingOffer, getBackends, getFederationConfig, getFederationTransfers, joinPairingOffer, pingBackends, setFederationBackup, setFederationTransfer, type BackendInfo, type BackendPingResult } from './api'
 
 const emit = defineEmits<{ (event: 'join-session', sessionId: string): void }>()
 
@@ -18,6 +18,8 @@ const federationRole = ref<'standalone' | 'leader' | 'follower'>('standalone')
 const backupToFollower = ref(false)
 const pendingTransfers = ref(0)
 const discoveryDetail = ref('')
+const pingResults = ref<BackendPingResult[]>([])
+const pingBusy = ref(false)
 let timer = 0
 
 async function refresh() {
@@ -44,6 +46,18 @@ async function refresh() {
     error.value = ''
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Discovery backendů není dostupné.'
+  }
+}
+
+async function runApplicationPing() {
+  pingBusy.value = true
+  try {
+    pingResults.value = (await pingBackends()).results
+    if (!pingResults.value.length) error.value = 'Aplikační ping nemá cílovou IP; zatím nedorazil žádný heartbeat.'
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'Aplikační ping selhal.'
+  } finally {
+    pingBusy.value = false
   }
 }
 
@@ -99,6 +113,8 @@ onBeforeUnmount(() => window.clearInterval(timer))
     <div><strong>Backend: {{ own?.name ?? 'načítám…' }}</strong><small v-if="own">{{ own.url }}</small><small v-if="federationEnabled">Federace {{ federationRole }} · páteřní přenos {{ transferEnabled ? 'povolený' : 'odložený' }} · ve frontě {{ pendingTransfers }}</small><small v-else>Jen discovery · federace není nakonfigurovaná</small><small v-if="lastSyncAt">Poslední synchronizace: {{ new Date(lastSyncAt).toLocaleTimeString() }}</small><small v-if="syncError" class="sync-error">Synchronizace selhala: {{ syncError }}</small></div>
     <span v-if="error" class="muted">{{ error }}</span>
     <span v-else-if="!peers.length" class="muted">{{ discoveryDetail || 'Další pult nenalezen' }}</span>
+    <button class="small secondary" :disabled="pingBusy" @click="runApplicationPing">{{ pingBusy ? 'Testuji…' : 'Aplikační ping' }}</button>
+    <small v-for="result in pingResults" :key="result.url" :class="result.ok ? 'ping-ok' : 'sync-error'">{{ result.url }} · {{ result.ok ? `${result.latency_ms} ms` : result.detail }}</small>
     <a v-for="peer in peers" :key="peer.backend_id" :href="peer.url" target="_blank" rel="noopener">
       {{ peer.name }} · {{ (peer.last_seen_seconds_ago ?? 0).toFixed(1) }} s
     </a>
@@ -132,4 +148,5 @@ onBeforeUnmount(() => window.clearInterval(timer))
 .pairing label, .pairing input { display: block; width: 100%; }
 .pairing input { margin: 6px 0 10px; }
 .sync-error { color: #fca5a5; }
+.ping-ok { color: #86efac; }
 </style>

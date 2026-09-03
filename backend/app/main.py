@@ -118,6 +118,12 @@ async def list_backends() -> dict:
     }
 
 
+@app.post("/api/backends/ping")
+async def ping_backends(request: Request) -> dict:
+    require_local_operator(request)
+    return {"results": await discovery.application_ping()}
+
+
 def require_federation_token(value: str | None) -> None:
     if not federation.enabled or not value or not hmac.compare_digest(value, federation.token):
         raise HTTPException(status_code=401, detail="Invalid federation token")

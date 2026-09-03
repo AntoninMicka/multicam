@@ -45,6 +45,17 @@ export function getBackends(): Promise<BackendStatus> {
   return fetch('/api/backends').then(json<BackendStatus>)
 }
 
+export interface BackendPingResult {
+  url: string
+  ok: boolean
+  latency_ms: number
+  detail: string
+}
+
+export function pingBackends(): Promise<{ results: BackendPingResult[] }> {
+  return fetch('/api/backends/ping', { method: 'POST' }).then(json<{ results: BackendPingResult[] }>)
+}
+
 export function getFederationConfig(): Promise<FederationConfig> {
   return fetch('/api/federation/config').then(json<FederationConfig>)
 }
