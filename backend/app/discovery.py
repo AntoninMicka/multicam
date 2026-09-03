@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from uuid import UUID, uuid4
 
+from .network import interface_addresses
+
 PROTOCOL = "multicam-discovery-v1"
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,16 @@ class BackendDiscovery:
         self.peers: dict[str, Peer] = {}
         self.transport: asyncio.DatagramTransport | None = None
         self.task: asyncio.Task | None = None
+        self.multicast_interface_ips: list[str] = []
+
+    def _current_multicast_ips(self) -> list[str]:
+        if self.interface_ip != "0.0.0.0":
+            return [self.interface_ip]
+        candidates = [
+            item["address"] for item in interface_addresses()
+            if item["family"] == "ipv4"
+        ]
+        return list(dict.fromkeys(candidates))
 
     @staticmethod
     def _backend_id() -> str:
@@ -67,7 +79,13 @@ class BackendDiscovery:
         if explicit := os.getenv("MULTICAM_PUBLIC_URL"):
             return explicit.rstrip("/")
         scheme = "https" if os.getenv("MULTICAM_HTTPS", "1") != "0" else "http"
-        host = os.getenv("MULTICAM_ADVERTISE_HOST", socket.gethostname())
+        host = os.getenv("MULTICAM_ADVERTISE_HOST")
+        if not host:
+            zerotier = next((
+                item["address"] for item in interface_addresses()
+                if item["family"] == "ipv4" and item["interface"].startswith("zt")
+            ), None)
+            host = zerotier or socket.gethostname()
         return f"{scheme}://{host}:{os.getenv('MULTICAM_PORT', '8000')}"
 
     def receive(self, raw: bytes, address: str) -> None:
@@ -98,10 +116,18 @@ class BackendDiscovery:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             socket.inet_aton(self.interface_ip)  # validate before starting the task
             sock.bind(("", self.port))
-            membership = socket.inet_aton(self.group) + socket.inet_aton(self.interface_ip)
-            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
-            if self.interface_ip != "0.0.0.0":
-                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(self.interface_ip))
+            self.multicast_interface_ips = self._current_multicast_ips()
+            memberships = self.multicast_interface_ips or ["0.0.0.0"]
+            joined = 0
+            for interface_ip in memberships:
+                try:
+                    membership = socket.inet_aton(self.group) + socket.inet_aton(interface_ip)
+                    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
+                    joined += 1
+                except OSError as error:
+                    logger.warning("Discovery multicast is unavailable on %s: %s", interface_ip, error)
+            if not joined:
+                raise OSError("No interface accepted the discovery multicast group")
             sock.setblocking(False)
             self.transport, _ = await loop.create_datagram_endpoint(lambda: _Protocol(self), sock=sock)
         except OSError as error:
@@ -112,12 +138,43 @@ class BackendDiscovery:
         self.task = asyncio.create_task(self._announce_loop())
 
     async def _announce_loop(self) -> None:
-        targets = [(self.group, self.port)]
-        targets.extend((host.strip(), self.port) for host in os.getenv("MULTICAM_DISCOVERY_PEERS", "").split(",") if host.strip())
-        payload = json.dumps({"protocol": PROTOCOL, "backend_id": self.backend_id, "name": self.name, "url": self.advertised_url()}, separators=(",", ":")).encode()
+        unicast_targets = [
+            (host.strip(), self.port)
+            for host in os.getenv("MULTICAM_DISCOVERY_PEERS", "").split(",")
+            if host.strip()
+        ]
         while True:
-            for target in targets:
-                if self.transport:
+            if self.transport:
+                raw_socket = self.transport.get_extra_info("socket")
+                current_ips = self._current_multicast_ips()
+                previous = set(self.multicast_interface_ips)
+                current = set(current_ips)
+                for interface_ip in current - previous:
+                    try:
+                        membership = socket.inet_aton(self.group) + socket.inet_aton(interface_ip)
+                        raw_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
+                        logger.info("Discovery added interface %s", interface_ip)
+                    except OSError as error:
+                        logger.warning("Discovery could not add interface %s: %s", interface_ip, error)
+                for interface_ip in previous - current:
+                    try:
+                        membership = socket.inet_aton(self.group) + socket.inet_aton(interface_ip)
+                        raw_socket.setsockopt(socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP, membership)
+                    except OSError:
+                        pass
+                self.multicast_interface_ips = current_ips
+                payload = json.dumps({
+                    "protocol": PROTOCOL, "backend_id": self.backend_id,
+                    "name": self.name, "url": self.advertised_url(),
+                }, separators=(",", ":")).encode()
+                multicast_ips = self.multicast_interface_ips or ["0.0.0.0"]
+                for interface_ip in multicast_ips:
+                    try:
+                        raw_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface_ip))
+                        self.transport.sendto(payload, (self.group, self.port))
+                    except OSError as error:
+                        logger.debug("Discovery announce failed on %s: %s", interface_ip, error)
+                for target in unicast_targets:
                     self.transport.sendto(payload, target)
             await asyncio.sleep(self.interval)
 
