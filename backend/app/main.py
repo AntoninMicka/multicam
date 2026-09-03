@@ -138,6 +138,31 @@ async def federation_config() -> dict:
     }
 
 
+@app.get("/api/federation/transfers")
+async def federation_transfers() -> dict:
+    peers = federation.target_peers()
+    pending: list[dict] = []
+    direction_enabled = federation.role == "follower" or (federation.role == "leader" and federation.backup_to_follower)
+    if direction_enabled:
+        for session in await store.list():
+            report = uploads.build_report(session)
+            for take in report["takes"]:
+                if not take["complete"]:
+                    continue
+                for peer in peers:
+                    receipt = uploads.root / str(session.session_id) / ".federation-sent" / f"{take['take_id']}-{peer['backend_id']}.json"
+                    if not receipt.is_file():
+                        pending.append({
+                            "session_id": str(session.session_id), "take_id": take["take_id"],
+                            "peer_backend_id": peer["backend_id"],
+                        })
+    return {
+        "pending_count": len(pending), "pending": pending,
+        "deferred": not federation.transfer_enabled,
+        "direction": "follower_to_leader" if federation.role == "follower" else "leader_to_follower_backup",
+    }
+
+
 @app.patch("/api/federation/config")
 async def update_federation_config(request: Request) -> dict:
     require_local_operator(request)

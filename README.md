@@ -141,6 +141,11 @@ Po ověření lokálních uploadů posílá follower svou část klapky leaderu 
 retry stavem. Opačný směr je vypnutý, dokud leader v UI nezapne **Zálohu na
 follower**. Potlačení federačních přenosů zastaví oba směry, nikoli řídicí
 povely ani synchronizaci relací.
+Tlačítko **Odložit páteřní přenosy** nezahazuje žádná data: telefon vždy nejprve
+dokončí upload na přímo připojený backend, ověří se video i telemetrie a hotová
+klapka zůstane v trvalé federační frontě. UI ukazuje počet čekajících přenosů.
+Po volbě **Spustit odložené přenosy** retry smyčka frontu automaticky odešle;
+primárně follower → leader, případně sekundárně leader → follower jako zálohu.
 
 U nalezeného pultu se zobrazuje jeho aktivní relace a tlačítko pro připojení
 lokálního pultu. Relace lze odstranit ze seznamu; po potvrzení se smažou její

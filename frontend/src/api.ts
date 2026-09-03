@@ -64,6 +64,16 @@ export function setFederationBackup(backupToFollower: boolean): Promise<Federati
   }).then(json<FederationConfig>)
 }
 
+export interface FederationTransferStatus {
+  pending_count: number
+  deferred: boolean
+  direction: 'follower_to_leader' | 'leader_to_follower_backup'
+}
+
+export function getFederationTransfers(): Promise<FederationTransferStatus> {
+  return fetch('/api/federation/transfers').then(json<FederationTransferStatus>)
+}
+
 interface UploadStatus {
   upload_id: string
   received_chunks: number[]

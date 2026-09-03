@@ -150,6 +150,18 @@ def test_follower_cannot_create_or_activate_session(monkeypatch) -> None:
     assert refused.status_code == 409
 
 
+def test_deferred_federation_transfer_reports_queue_state(monkeypatch) -> None:
+    monkeypatch.setattr(federation, "token", "x" * 32)
+    monkeypatch.setattr(federation, "role", "follower")
+    monkeypatch.setattr(federation, "transfer_enabled", False)
+    monkeypatch.setattr(federation, "leader_backend_id", "11111111-1111-4111-8111-111111111111")
+    monkeypatch.setattr(federation, "leader_url", "https://10.10.0.1:8000")
+    response = asyncio.run(request("GET", "/api/federation/transfers"))
+    assert response.status_code == 200
+    assert response.json()["deferred"] is True
+    assert response.json()["direction"] == "follower_to_leader"
+
+
 def test_session_can_be_deleted_but_not_while_recording(monkeypatch) -> None:
     monkeypatch.setattr(federation, "token", "")
     session = asyncio.run(request("POST", "/api/sessions", json={"name": "Ke smazání"})).json()
