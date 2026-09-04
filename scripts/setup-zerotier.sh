@@ -2,13 +2,21 @@
 set -Eeuo pipefail
 
 usage() {
-  printf 'Použití: sudo %s --install [NETWORK_ID]\n' "${0##*/}"
-  printf '         sudo %s NETWORK_ID\n' "${0##*/}"
+  printf 'Použití: sudo %s [--no-firewall] --install [NETWORK_ID]\n' "${0##*/}"
+  printf '         sudo %s [--no-firewall] NETWORK_ID\n' "${0##*/}"
   printf 'Nainstaluje ZeroTier a volitelně připojí existující síť.\n'
 }
 
 install=0
-if [[ "${1:-}" == "--install" ]]; then install=1; shift; fi
+configure_firewall=1
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --install) install=1 ;;
+    --no-firewall) configure_firewall=0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+  shift
+done
 network_id="${1:-}"
 if [[ -z "${network_id}" && ${install} -ne 1 ]]; then usage >&2; exit 2; fi
 if [[ -n "${network_id}" && ! "${network_id}" =~ ^[0-9a-fA-F]{16}$ ]]; then usage >&2; exit 2; fi
@@ -40,6 +48,9 @@ if [[ -n "${network_id}" ]]; then
   printf '\nZeroTier čeká na autorizaci člena v ZeroTier Central. Stav:\n'
 fi
 zerotier-cli listnetworks
+if [[ ${configure_firewall} -eq 1 ]]; then
+  "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/setup-firewall.sh" apply
+fi
 if [[ -n "${network_id}" ]]; then
   printf '\nPo autorizaci spusťte MultiCam s MULTICAM_PUBLIC_URL=https://ZEROTIER_IP:8000 ./run.sh\n'
 fi

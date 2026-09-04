@@ -122,6 +122,21 @@ discovery pak používá unicast heartbeat. Povolit je potřeba UDP 47777 mezi
 notebooky a TCP 8000 pro web/API. Certifikační autoritě druhého pultu je nutné
 důvěřovat, pokud se jeho web otevírá přímo v prohlížeči.
 
+Setup na Debianu/Ubuntu při aktivním UFW tato dvě příchozí pravidla přidá
+automaticky. Pravidla jsou označená jako spravovaná MultiCamem, opakované
+spuštění nevytváří duplicity a firewall se nikdy automaticky nezapíná ani
+nevypíná. Samostatně je lze zkontrolovat nebo odebrat:
+
+```bash
+sudo ./scripts/setup-firewall.sh status
+sudo ./scripts/setup-firewall.sh remove
+```
+
+Automatickou změnu lze při setupu potlačit přepínačem `--no-firewall`. Pokud je
+použitý jiný firewall než UFW, skript jej ponechá beze změny a pravidla TCP
+8000 a UDP 47777 je nutné přidat jeho nativní konfigurací. Nestandardní porty
+skript převezme z `MULTICAM_PORT` a `MULTICAM_DISCOVERY_PORT`.
+
 Se stejnou hodnotou `MULTICAM_FEDERATION_TOKEN` fungují oba backendy jako jeden
 pult: relace a seznam připojených kamer se slučují, `ARM`, `START` a `STOP` se
 předají druhému backendu ihned a oba použijí stejné `take_id`. Telefon vždy
