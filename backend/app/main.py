@@ -874,6 +874,8 @@ async def get_recording_media(session_id: UUID, device_id: UUID, capture_id: UUI
         path = await asyncio.to_thread(uploads.playback_path, session_id, device_id, capture_id)
     except UploadNotFoundError as error:
         raise HTTPException(status_code=404, detail="Recording not found") from error
+    except UploadConflictError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
     return FileResponse(path)
 
 

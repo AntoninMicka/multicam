@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -155,6 +156,8 @@ class UploadService:
                 temporary.unlink(missing_ok=True)
                 raise UploadConflictError("Final file integrity check failed")
             os.replace(temporary, final_path)
+            if metadata.get("kind", "recording") == "recording":
+                await asyncio.to_thread(self.normalize_recording, final_path)
             receipt = UploadReceipt(
                 upload_id=upload_id,
                 capture_id=UUID(metadata["capture_id"]),
@@ -217,6 +220,8 @@ class UploadService:
                     continue
                 recording = artifacts["recording"]
                 receipt_path = self.root / recording["receipt"]["file_path"]
+                normalized = self._normalized_path(receipt_path)
+                has_normalized = normalized.is_file() and normalized.stat().st_size > 0
                 created_at = recording.get("created_at")
                 if created_at is None and receipt_path.exists():
                     created_at = datetime.fromtimestamp(receipt_path.stat().st_mtime, timezone.utc)
@@ -229,8 +234,8 @@ class UploadService:
                     device_id=device.device_id,
                     device_name=device.name,
                     role=device.role,
-                    mime_type=recording["mime_type"],
-                    size_bytes=recording["size_bytes"],
+                    mime_type="video/webm" if has_normalized else recording["mime_type"],
+                    size_bytes=normalized.stat().st_size if has_normalized else recording["size_bytes"],
                     created_at=created_at,
                     video_url=f"/api/media/{session.session_id}/{device.device_id}/{capture_id}/video",
                     telemetry_url=telemetry_url,
@@ -255,8 +260,40 @@ class UploadService:
                     return path
         raise UploadNotFoundError(capture_id)
 
+    @staticmethod
+    def _normalized_path(source: Path) -> Path:
+        return source.with_name(f"{source.stem}.normalized.webm")
+
+    def normalize_recording(self, source: Path) -> Path:
+        if source.suffix.lower() not in {".mp4", ".mov"}:
+            return source
+        output = self._normalized_path(source)
+        if output.is_file() and output.stat().st_size > 0 and output.stat().st_mtime >= source.stat().st_mtime:
+            return output
+        # Each caller uses a separate temporary file; readers only see complete output.
+        with tempfile.NamedTemporaryFile(dir=source.parent, suffix=".webm.part", delete=False) as handle:
+            temporary = Path(handle.name)
+        try:
+            result = subprocess.run([
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?",
+                "-c:v", "libvpx", "-crf", "10", "-b:v", "0", "-deadline", "good",
+                "-cpu-used", "4", "-pix_fmt", "yuv420p", "-c:a", "libopus",
+                "-b:a", "128k", "-f", "webm", str(temporary),
+            ], capture_output=True, text=True, timeout=3600, check=False)
+            if result.returncode != 0 or temporary.stat().st_size == 0:
+                raise UploadConflictError("Konverze videa do WebM selhala; originál zůstal zachován.")
+            os.replace(temporary, output)
+            return output
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise UploadConflictError("Konverze videa vyžaduje dostupný FFmpeg a dokončení do 60 minut.") from error
+        finally:
+            temporary.unlink(missing_ok=True)
+
     def playback_path(self, session_id: UUID, device_id: UUID, capture_id: UUID) -> Path:
         source = self.artifact_path(session_id, device_id, capture_id, "recording")
+        if source.suffix.lower() in {".mp4", ".mov"}:
+            return self.normalize_recording(source)
         if source.suffix.lower() != ".webm":
             return source
         playback = source.with_name(f"{source.stem}.playback.webm")
@@ -290,6 +327,7 @@ class UploadService:
                 artifact = (self.root / receipt_path).resolve()
                 if artifact.is_relative_to(root):
                     artifact.unlink(missing_ok=True)
+                    self._normalized_path(artifact).unlink(missing_ok=True)
                     if artifact.suffix.lower() == ".webm":
                         artifact.with_name(f"{artifact.stem}.playback.webm").unlink(missing_ok=True)
             resolved_upload = upload_dir.resolve()
@@ -332,10 +370,13 @@ class UploadService:
                 "streams": [],
             })
             artifacts: dict[str, dict] = {}
+            original_mime_type = media.mime_type
             uploads_dir = self._device_dir(session.session_id, media.device_id) / ".uploads"
             for metadata_path in uploads_dir.glob("*/upload.json"):
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
                 if metadata.get("capture_id") == str(media.capture_id) and metadata.get("complete"):
+                    if metadata.get("kind", "recording") == "recording":
+                        original_mime_type = metadata["mime_type"]
                     receipt = metadata.get("receipt", {})
                     artifacts[metadata.get("kind", "recording")] = {
                         "file_path": receipt.get("file_path"),
@@ -347,7 +388,7 @@ class UploadService:
                 "device_id": str(media.device_id),
                 "device_name": media.device_name,
                 "role": media.role.value,
-                "mime_type": media.mime_type,
+                "mime_type": original_mime_type,
                 "artifacts": artifacts,
                 "sync_analysis": analysis.get("captures", {}).get(str(media.capture_id)),
             })
