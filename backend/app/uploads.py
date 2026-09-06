@@ -1,10 +1,12 @@
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -30,6 +32,7 @@ class UploadService:
         configured = os.environ.get("MULTICAM_DATA_DIR")
         self.root = root or Path(configured or "data/sessions").resolve()
         self._locks: dict[UUID, asyncio.Lock] = {}
+        self._conversion_lock = threading.Lock()
 
     def _device_dir(self, session_id: UUID, device_id: UUID) -> Path:
         return self.root / str(session_id) / "devices" / str(device_id)
@@ -265,6 +268,27 @@ class UploadService:
         return source.with_name(f"{source.stem}.normalized.webm")
 
     def normalize_recording(self, source: Path) -> Path:
+        # Startup backfill, uploads and playback can request the same conversion.
+        with self._conversion_lock:
+            return self._normalize_recording(source)
+
+    async def normalize_existing_recordings(self) -> None:
+        """Backfill verified recordings from every session, one at a time."""
+        root = self.root.resolve()
+        for metadata_path in self.root.glob("*/devices/*/.uploads/*/upload.json"):
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if not metadata.get("complete") or metadata.get("kind", "recording") != "recording":
+                    continue
+                source = (root / metadata["receipt"]["file_path"]).resolve()
+                if not source.is_relative_to(root) or not source.is_file():
+                    continue
+                if source.suffix.lower() in {".mp4", ".mov"}:
+                    await asyncio.to_thread(self.normalize_recording, source)
+            except (OSError, ValueError, KeyError, TypeError, AttributeError, UploadConflictError):
+                logging.getLogger(__name__).exception("Nelze převést starší záznam: %s", metadata_path)
+
+    def _normalize_recording(self, source: Path) -> Path:
         if source.suffix.lower() not in {".mp4", ".mov"}:
             return source
         output = self._normalized_path(source)

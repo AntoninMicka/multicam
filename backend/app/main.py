@@ -47,11 +47,13 @@ async def lifespan(_: FastAPI):
     os.environ["MULTICAM_BACKEND_ID_RUNTIME"] = discovery.backend_id
     await discovery.start()
     sync_task = asyncio.create_task(federation_sync_loop())
+    conversion_task = asyncio.create_task(uploads.normalize_existing_recordings())
     try:
         yield
     finally:
         sync_task.cancel()
-        await asyncio.gather(sync_task, return_exceptions=True)
+        conversion_task.cancel()
+        await asyncio.gather(sync_task, conversion_task, return_exceptions=True)
         await discovery.stop()
 
 

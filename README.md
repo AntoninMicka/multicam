@@ -12,7 +12,7 @@ Spolehlivě pořídit z několika telefonů jednu společnou relaci obsahující
 - lokální server: Python + FastAPI + WebSocket
 - serverový nástroj: FFmpeg pro bezztrátové doplnění WebM indexu a konverzi MP4/MOV do WebM (vyžaduje enkodéry libvpx a libopus)
 
-MP4/MOV z iPhonu se po nahrání automaticky převede na WebM s videem VP8 a zvukem Opus pro přehrávání a mozaiku. Rozlišení se nemění a video bez zvuku je podporováno. Původní soubor zůstává zachovaný pro kontrolní součet, analýzu a export originálů; převedená kopie má příponu `.normalized.webm`. WebM z Androidů se znovu nekóduje. Starší MP4/MOV se převede při prvním přehrání. Potvrzení uploadu čeká na dokončení převodu (u 4K může trvat déle); při chybě zůstává originál uložený a klient může požadavek zopakovat.
+MP4/MOV z iPhonu se po nahrání automaticky převede na WebM s videem VP8 a zvukem Opus pro přehrávání a mozaiku. Rozlišení se nemění a video bez zvuku je podporováno. Původní soubor zůstává zachovaný pro kontrolní součet, analýzu a export originálů; převedená kopie má příponu `.normalized.webm`. WebM z Androidů se znovu nekóduje. Při každém startu server na pozadí postupně zpracuje také již dokončené MP4/MOV ze všech uložených relací. Platné převedené kopie přeskočí; chybu jednotlivého záznamu zapíše do logu a pokračuje dalšími. Převod lze vyvolat také přehráním staršího záznamu. Potvrzení nového uploadu čeká na dokončení převodu (u 4K může trvat déle); při chybě zůstává originál uložený a klient může požadavek zopakovat.
 - lokální úložiště telefonu: IndexedDB
 - desktopový režisérský pult: nejprve webové UI, později volitelně Qt
 

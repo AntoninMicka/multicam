@@ -35,6 +35,14 @@ def test_upload_converts_mp4_and_preserves_receipt(tmp_path, audio):
     receipt = asyncio.run(upload())
     assert (service.root / receipt.file_path).read_bytes() == payload
     assert receipt.sha256 == data.sha256
+    # Simulate an upload completed by an older server, without a converted copy.
+    service._normalized_path(service.root / receipt.file_path).unlink()
+    asyncio.run(service.normalize_existing_recordings())
+    normalized = service._normalized_path(service.root / receipt.file_path)
+    assert normalized.is_file()
+    backfilled_at = normalized.stat().st_mtime_ns
+    asyncio.run(service.normalize_existing_recordings())
+    assert normalized.stat().st_mtime_ns == backfilled_at
     output = service.playback_path(session_id, device_id, data.capture_id)
     probe = subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-of', 'json', str(output)],
                            capture_output=True, text=True, check=True)
@@ -66,3 +74,32 @@ def test_webm_is_not_transcoded(tmp_path):
     source = tmp_path / 'android.webm'
     source.write_bytes(b'original')
     assert UploadService(tmp_path).normalize_recording(source) == source
+
+
+def test_backfill_skips_incomplete_and_continues_after_failure(tmp_path, monkeypatch, caplog):
+    service = UploadService(tmp_path / 'sessions')
+    expected = set()
+    for name, complete, kind in [('broken', True, 'recording'), ('valid', True, 'recording'),
+                                 ('pending', False, 'recording'), ('timing', True, 'telemetry')]:
+        device = service.root / name / 'devices' / 'device'
+        source = device / 'recordings' / f'{name}.mov'
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b'original')
+        metadata = device / '.uploads' / 'upload' / 'upload.json'
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text(json.dumps({'complete': complete, 'kind': kind,
+                                       'receipt': {'file_path': str(source.relative_to(service.root))}}))
+        if complete and kind == 'recording':
+            expected.add(source.resolve())
+    calls = []
+
+    def convert(source):
+        calls.append(source)
+        if source.stem == 'broken':
+            raise UploadConflictError('invalid video')
+        return source
+
+    monkeypatch.setattr(service, 'normalize_recording', convert)
+    asyncio.run(service.normalize_existing_recordings())
+    assert set(calls) == expected
+    assert 'Nelze převést starší záznam' in caplog.text
