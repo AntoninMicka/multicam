@@ -12,6 +12,7 @@ instalace/aktualizace Omnie, poté oprava integrity MediaRecorder podle příloh
 - [x] Základ profilu Omnia: Debian LXC na SSD, guard mountu a identity disku, sestavený frontend.
 - [ ] Obnova telefonu po uspání: reconnect WebSocketu, načtení skutečného stavu relace, obnovení kamery/Wake Locku a bezpečné doposlání lokálních záznamů.
 - [ ] Discovery na všech dostupných IPv4 rozhraních včetně průběžného přidání/odebrání rozhraní; fungující adresy pro federaci a unicast fallback.
+- [ ] **Automatický přenos relací (Triggery):** Implementovat trigger pro přesun dokončených relací (včetně dat) z aktuálního director uzlu na dedikovaný storage uzel ve chvíli, kdy jsou všechna zařízení ve stavu `stored` / `verified`. 
 - [ ] IP kamery: registrace RTSP/HTTP zdroje na backendu, ARM/START/STOP přes společnou relaci, FFmpeg záznam, telemetrie, validace a přenos na storage; UI a testy.
 - [ ] Omnia: instalační a aktualizační skript včetně kontroly SSD, zálohy/rollbacku verze aplikace a zachování dat i konfigurace.
 - [ ] Audit příčiny chybějící WebM inicializace: MediaRecorder lifecycle, chunk 0, IDB transakce, finalizace, opakované starty a retry; bez rekonstrukce poškozených souborů.
@@ -161,3 +162,4 @@ Stavy: `[x]` implementováno, `[~]` implementováno
    otestovat restart, výpadek Wi-Fi, paralelní upload, teplotu a několikaminutový záznam.
 3. **Detekce obrazové nebo zvukové klapky.** Změřit přesnou korekci každého videa,
    uložit ji do reportu a porovnat ji se síťovým odhadem offsetu.
+

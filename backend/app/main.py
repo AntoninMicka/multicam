@@ -871,6 +871,10 @@ async def replicate_take_to_peer(session_id: UUID, take_id: UUID, peer: dict) ->
         return
     destination = uploads.root / ".federation" / f"{session_id}-{take_id}-{discovery.backend_id}.zip"
     try:
+        # PUSH session metadata to storage before sending the data bundle
+        # Storage uzel totiž odmítne importovat ZIP, pokud u sebe nemá založenou relaci (session.json)
+        await federation.post_json(peer["url"], "/api/federation/session-state", await federation_snapshot(federation.token))
+        
         await asyncio.to_thread(export_take, uploads.root, session_id, take_id, local_ids, destination)
         await federation.send_bundle(peer["url"], destination, str(session_id), str(take_id))
         if not federation.transfer_enabled:
@@ -1305,3 +1309,4 @@ async def run_clap_sequence(session_id: UUID, automatic: bool) -> None:
 frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if frontend_dist.is_dir():
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
+
