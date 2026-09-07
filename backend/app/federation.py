@@ -240,6 +240,7 @@ class Federation:
             )
             with path.open("rb") as source:
                 request.data = source
+                request.add_header("Content-Length", str(path.stat().st_size))
                 with urllib.request.urlopen(request, timeout=300, context=self._ssl_context()) as response:
                     result = json.loads(response.read())
                     if result.get("verified") is not True:

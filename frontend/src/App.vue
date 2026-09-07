@@ -345,6 +345,11 @@ async function chooseRole(selectedRole: Role) {
   }
 }
 
+async function refreshDirectorState(value: boolean) {
+  isDirectorBackend.value = value
+  if (!session.value) availableSessions.value = await listSessions().catch(() => availableSessions.value)
+}
+
 async function selectSession(selected: Session) {
   if (selected.state === 'closed') return
   if (isDirectorBackend.value) await activateSession(selected.session_id)
@@ -810,11 +815,11 @@ async function uploadStoredCapture(capture: LocalCapture) {
       })
     }
     await Promise.all([
-      uploadArtifact(session.value.session_id, deviceId.value, capture.capture_id, 'recording', localRecording, (progress) => {
+      uploadArtifact(capture.session_id, capture.device_id, capture.capture_id, 'recording', localRecording, (progress) => {
         videoProgress = progress
         updateProgress()
       }, capture.take_id),
-      uploadArtifact(session.value.session_id, deviceId.value, capture.capture_id, 'telemetry', telemetry, (progress) => {
+      uploadArtifact(capture.session_id, capture.device_id, capture.capture_id, 'telemetry', telemetry, (progress) => {
         telemetryProgress = progress
         updateProgress()
       }, capture.take_id),
@@ -943,7 +948,7 @@ onBeforeUnmount(() => {
       <button class="back" @click="role = null">← změnit roli</button>
       <template v-if="role === 'director'">
         <HotspotPanel />
-        <BackendPeers @join-session="joinFederatedSession" @director-changed="isDirectorBackend = $event" />
+        <BackendPeers @join-session="joinFederatedSession" @director-changed="refreshDirectorState" />
         <ZeroTierPanel />
         <InterfaceQrPanel />
         <button class="archive-button secondary" @click="archiveOpen = true">Archiv všech záznamů</button>
@@ -981,7 +986,7 @@ onBeforeUnmount(() => {
         <button class="back" @click="backToSessions">← seznam relací</button>
         <button class="archive-button secondary" @click="archiveOpen = true">Archiv všech záznamů</button>
         <HotspotPanel />
-        <BackendPeers @join-session="joinFederatedSession" @director-changed="isDirectorBackend = $event" />
+        <BackendPeers @join-session="joinFederatedSession" @director-changed="refreshDirectorState" />
         <ZeroTierPanel />
         <InterfaceQrPanel />
         <h3>Zařízení ({{ devices.length }})</h3>
@@ -1019,7 +1024,11 @@ onBeforeUnmount(() => {
             <p v-if="role !== 'main_camera' && recording" class="recording-indicator">● Probíhá záznam</p>
           </div>
           <div class="camera-controls">
-            <div class="ready"><span>✓</span><div><strong>Zařízení je připravené</strong><small>{{ deviceName }} · {{ VIDEO_PROFILES[selectedVideoProfile].label }}</small><small>{{ activeVideoSettings }}</small></div></div>
+            <template v-if="session.state === 'closed'">
+              <p>Relace je ukončená. Zbývající záznamy lze ještě odeslat.</p>
+              <button :disabled="recording || recordingFinalizing || uploadingCaptureId !== null" @click="backToSessions">Připojit k nové relaci</button>
+            </template>
+            <div v-else class="ready"><span>✓</span><div><strong>Zařízení je připravené</strong><small>{{ deviceName }} · {{ VIDEO_PROFILES[selectedVideoProfile].label }}</small><small>{{ activeVideoSettings }}</small></div></div>
             <div v-if="role === 'main_camera' && session.state !== 'closed'" class="record-controls">
               <template v-if="session.state !== 'recording'">
                 <button v-if="session.state !== 'armed'" class="secondary" :disabled="!cameraReady" @click="sendRecordingCommand('control.arm')">1. ARM · připravit kamery</button>

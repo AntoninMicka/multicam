@@ -204,6 +204,7 @@ async def update_federation_config(request: Request) -> dict:
 
 assignment_lock = asyncio.Lock()
 control_lock = asyncio.Lock()
+storage_mutation_lock = asyncio.Lock()
 applied_controls: dict[UUID, int] = {}
 
 
@@ -444,7 +445,11 @@ async def federation_take(
         with temporary.open("wb") as output:
             async for chunk in request.stream():
                 output.write(chunk)
-        imported = await asyncio.to_thread(import_take, uploads.root, temporary, session_id, take_id)
+        async with storage_mutation_lock:
+            check_storage()
+            if session_id in deleted_session_ids:
+                raise HTTPException(status_code=410, detail="Relace byla lokálně smazána")
+            imported = await asyncio.to_thread(import_take, uploads.root, temporary, session_id, take_id)
     except BundleError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     finally:
@@ -624,7 +629,8 @@ async def delete_session_data(session_id: UUID) -> None:
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: UUID) -> dict:
-    await delete_session_data(session_id)
+    async with storage_mutation_lock:
+        await delete_session_data(session_id)
     return {"deleted": True, "session_id": str(session_id)}
 
 
