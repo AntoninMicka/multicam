@@ -212,6 +212,13 @@ class SessionStore:
             self._persist(session)
             return session.model_copy(deep=True)
 
+    async def set_device_source(self, session_id: UUID, device_id: UUID, source_kind: str) -> Device:
+        async with self._lock:
+            device = self._sessions[session_id].devices[str(device_id)]
+            device.source_kind = source_kind
+            self._persist(self._sessions[session_id])
+            return device.model_copy(deep=True)
+
     async def set_connected(self, session_id: UUID, device_id: UUID, connected: bool) -> None:
         async with self._lock:
             session = self._sessions.get(session_id)

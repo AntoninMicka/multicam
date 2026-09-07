@@ -1,8 +1,9 @@
+import { assembleRecording, CaptureIntegrityError } from './recordingChunks.ts'
+export { CaptureIntegrityError } from './recordingChunks.ts'
 const DATABASE_NAME = 'multicam-recordings'
 const DATABASE_VERSION = 1
 
-export type LocalCaptureState = 'recording' | 'stored' | 'uploading' | 'verified'
-
+export type LocalCaptureState = 'recording' | 'stored' | 'uploading' | 'uploaded' | 'validating' | 'verified' | 'failed'
 export interface LocalCapture {
   capture_id: string
   take_id?: string
@@ -15,138 +16,173 @@ export interface LocalCapture {
   updated_at: string
   chunk_count: number
   size_bytes: number
+  first_chunk_size?: number
+  last_chunk_size?: number
+  total_size?: number
+  error?: string
+  verification_version?: number
   stream_settings: Record<string, unknown>
 }
-
-interface StoredChunk {
-  capture_id: string
-  index: number
-  data: Blob
-}
-
-interface StoredTelemetry {
-  capture_id: string
-  index: number
-  event: unknown
-}
-
+interface StoredChunk { capture_id: string; index: number; data: Blob }
+interface StoredTelemetry { capture_id: string; index: number; event: unknown }
 let databasePromise: Promise<IDBDatabase> | null = null
-
 function database(): Promise<IDBDatabase> {
   if (databasePromise) return databasePromise
   databasePromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION)
-    request.onerror = () => reject(request.error)
+    request.onerror = () => { databasePromise = null; reject(request.error) }
     request.onupgradeneeded = () => {
       const db = request.result
       const captures = db.createObjectStore('captures', { keyPath: 'capture_id' })
       captures.createIndex('device_id', 'device_id')
-      const chunks = db.createObjectStore('chunks', { keyPath: ['capture_id', 'index'] })
-      chunks.createIndex('capture_id', 'capture_id')
-      const telemetry = db.createObjectStore('telemetry', { keyPath: ['capture_id', 'index'] })
-      telemetry.createIndex('capture_id', 'capture_id')
+      for (const name of ['chunks', 'telemetry']) {
+        const store = db.createObjectStore(name, { keyPath: ['capture_id', 'index'] })
+        store.createIndex('capture_id', 'capture_id')
+      }
     }
-    request.onsuccess = () => resolve(request.result)
+    request.onsuccess = () => {
+      const db = request.result
+      db.onversionchange = () => { db.close(); databasePromise = null }
+      db.onclose = () => { databasePromise = null }
+      resolve(db)
+    }
   })
   return databasePromise
 }
-
 function transactionDone(transaction: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve()
-    transaction.onerror = () => reject(transaction.error)
+    transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB write failed'))
     transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB transaction aborted'))
   })
 }
-
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error)
   })
 }
-
 export async function createLocalCapture(capture: LocalCapture): Promise<void> {
   const db = await database()
-  const transaction = db.transaction('captures', 'readwrite')
-  transaction.objectStore('captures').put(capture)
-  await transactionDone(transaction)
+  const tx = db.transaction('captures', 'readwrite')
+  const done = transactionDone(tx)
+  tx.objectStore('captures').add(capture)
+  await done
 }
-
 export async function appendRecordingChunk(captureId: string, index: number, data: Blob): Promise<void> {
+  if (!Number.isInteger(index) || index < 0 || !data.size) throw new CaptureIntegrityError(`Neplatný blok ${index}.`)
   const db = await database()
-  const transaction = db.transaction(['captures', 'chunks'], 'readwrite')
-  const captures = transaction.objectStore('captures')
-  const capture = await requestResult(captures.get(captureId)) as LocalCapture | undefined
-  if (!capture) throw new Error('Lokální záznam nebyl nalezen.')
-  transaction.objectStore('chunks').put({ capture_id: captureId, index, data } satisfies StoredChunk)
-  capture.chunk_count = Math.max(capture.chunk_count, index + 1)
-  capture.size_bytes += data.size
-  capture.updated_at = new Date().toISOString()
-  captures.put(capture)
-  await transactionDone(transaction)
+  const tx = db.transaction(['captures', 'chunks'], 'readwrite')
+  const done = transactionDone(tx)
+  const captures = tx.objectStore('captures')
+  const request = captures.get(captureId)
+  // Queue dependent writes in the IDB success event itself: never yield a live
+  // readwrite transaction across an await (notably on Safari).
+  request.onsuccess = () => {
+    const capture = request.result as LocalCapture | undefined
+    if (!capture) { tx.abort(); return }
+    tx.objectStore('chunks').add({ capture_id: captureId, index, data } satisfies StoredChunk)
+    capture.chunk_count += 1
+    capture.size_bytes += data.size
+    capture.total_size = capture.size_bytes
+    if (index === 0) capture.first_chunk_size = data.size
+    capture.last_chunk_size = data.size
+    capture.updated_at = new Date().toISOString()
+    captures.put(capture)
+  }
+  await done
 }
-
 export async function appendTelemetryEvent(captureId: string, index: number, event: unknown): Promise<void> {
   const db = await database()
-  const transaction = db.transaction('telemetry', 'readwrite')
-  transaction.objectStore('telemetry').put({ capture_id: captureId, index, event } satisfies StoredTelemetry)
-  await transactionDone(transaction)
+  const tx = db.transaction('telemetry', 'readwrite')
+  const done = transactionDone(tx)
+  tx.objectStore('telemetry').add({ capture_id: captureId, index, event } satisfies StoredTelemetry)
+  await done
 }
-
-export async function setLocalCaptureState(captureId: string, state: LocalCaptureState): Promise<void> {
+export async function setLocalCaptureState(captureId: string, state: LocalCaptureState, error?: string): Promise<void> {
   const db = await database()
-  const transaction = db.transaction('captures', 'readwrite')
-  const store = transaction.objectStore('captures')
-  const capture = await requestResult(store.get(captureId)) as LocalCapture | undefined
-  if (!capture) throw new Error('Lokální záznam nebyl nalezen.')
-  capture.state = state
-  capture.updated_at = new Date().toISOString()
-  store.put(capture)
-  await transactionDone(transaction)
+  const tx = db.transaction('captures', 'readwrite')
+  const done = transactionDone(tx)
+  const store = tx.objectStore('captures')
+  const request = store.get(captureId)
+  request.onsuccess = () => {
+    const capture = request.result as LocalCapture | undefined
+    if (!capture) { tx.abort(); return }
+    capture.state = state
+    if (state === 'verified') capture.verification_version = 2
+    capture.error = error
+    capture.updated_at = new Date().toISOString()
+    store.put(capture)
+  }
+  await done
 }
-
 export async function listLocalCaptures(deviceId?: string): Promise<LocalCapture[]> {
   const db = await database()
-  const transaction = db.transaction('captures', 'readonly')
-  const store = transaction.objectStore('captures')
-  const captures = await requestResult(
-    deviceId ? store.index('device_id').getAll(deviceId) : store.getAll(),
-  ) as LocalCapture[]
-  await transactionDone(transaction)
+  const tx = db.transaction('captures', 'readonly')
+  const done = transactionDone(tx)
+  const store = tx.objectStore('captures')
+  const [captures] = await Promise.all([
+    requestResult(deviceId ? store.index('device_id').getAll(deviceId) : store.getAll()) as Promise<LocalCapture[]>, done,
+  ])
   return captures.sort((left, right) => right.created_at.localeCompare(left.created_at))
 }
-
 export async function readLocalArtifacts(captureId: string, mimeType: string): Promise<{ recording: Blob; telemetry: Blob }> {
   const db = await database()
-  const transaction = db.transaction(['chunks', 'telemetry'], 'readonly')
-  const chunks = await requestResult(
-    transaction.objectStore('chunks').index('capture_id').getAll(captureId),
-  ) as StoredChunk[]
-  const telemetry = await requestResult(
-    transaction.objectStore('telemetry').index('capture_id').getAll(captureId),
-  ) as StoredTelemetry[]
-  await transactionDone(transaction)
-  chunks.sort((left, right) => left.index - right.index)
-  telemetry.sort((left, right) => left.index - right.index)
-  return {
-    recording: new Blob(chunks.map((chunk) => chunk.data), { type: mimeType }),
-    telemetry: new Blob(telemetry.map((sample) => `${JSON.stringify(sample.event)}\n`), { type: 'application/x-ndjson' }),
+  const tx = db.transaction(['captures', 'chunks', 'telemetry'], 'readonly')
+  const done = transactionDone(tx)
+  // Schedule all reads before awaiting; the transaction must not auto-commit
+  // between getAll(chunks) and getAll(telemetry).
+  const [capture, chunks, telemetry] = await Promise.all([
+    requestResult(tx.objectStore('captures').get(captureId)) as Promise<LocalCapture | undefined>,
+    requestResult(tx.objectStore('chunks').index('capture_id').getAll(captureId)) as Promise<StoredChunk[]>,
+    requestResult(tx.objectStore('telemetry').index('capture_id').getAll(captureId)) as Promise<StoredTelemetry[]>, done,
+  ])
+  if (!capture) throw new CaptureIntegrityError('Záznam chybí v lokální databázi.')
+  if (mimeType !== capture.mime_type) throw new CaptureIntegrityError('Typ média neodpovídá uloženému záznamu.')
+  try {
+    const recording = await assembleRecording(chunks, capture.chunk_count, capture.size_bytes, capture.mime_type)
+    const sorted = [...chunks].sort((a, b) => a.index - b.index)
+    console.info('capture.assembled', { capture_id: captureId, chunks: chunks.length,
+      indexes: `0..${chunks.length - 1}`, first_chunk_size: sorted[0]?.data.size,
+      last_chunk_size: sorted.at(-1)?.data.size, total_size: recording.size, mime_type: capture.mime_type })
+    telemetry.sort((a, b) => a.index - b.index)
+    return { recording, telemetry: new Blob(telemetry.map(sample => `${JSON.stringify(sample.event)}\n`), { type: 'application/x-ndjson' }) }
+  } catch (error) {
+    console.error('capture.integrity_failed', { capture_id: captureId, indexes: chunks.map(chunk => chunk.index), error: String(error) })
+    throw error
   }
 }
-
-async function deleteByCapture(index: IDBIndex, captureId: string): Promise<void> {
-  const keys = await requestResult(index.getAllKeys(captureId))
-  for (const key of keys) index.objectStore.delete(key)
+export async function finalizeLocalCapture(captureId: string, expectedCount: number): Promise<void> {
+  const capture = (await listLocalCaptures()).find(item => item.capture_id === captureId)
+  if (!capture || capture.chunk_count !== expectedCount) throw new CaptureIntegrityError('Ne všechny bloky MediaRecorderu byly uloženy.')
+  await readLocalArtifacts(captureId, capture.mime_type)
+  await setLocalCaptureState(captureId, 'stored')
 }
-
 export async function deleteLocalCapture(captureId: string): Promise<void> {
   const db = await database()
-  const transaction = db.transaction(['captures', 'chunks', 'telemetry'], 'readwrite')
-  transaction.objectStore('captures').delete(captureId)
-  await Promise.all([
-    deleteByCapture(transaction.objectStore('chunks').index('capture_id'), captureId),
-    deleteByCapture(transaction.objectStore('telemetry').index('capture_id'), captureId),
-  ])
-  await transactionDone(transaction)
+  const tx = db.transaction(['captures', 'chunks', 'telemetry'], 'readwrite')
+  const done = transactionDone(tx)
+  const request = tx.objectStore('captures').get(captureId)
+  request.onsuccess = () => {
+    if (request.result?.state !== 'verified' || request.result.verification_version !== 2) { tx.abort(); return }
+    tx.objectStore('captures').delete(captureId)
+    for (const name of ['chunks', 'telemetry']) {
+      const index = tx.objectStore(name).index('capture_id')
+      const keys = index.getAllKeys(captureId)
+      keys.onsuccess = () => { for (const key of keys.result) index.objectStore.delete(key) }
+    }
+  }
+  await done
+}
+
+export async function recoverLocalCaptures(): Promise<void> {
+  for (const capture of await listLocalCaptures()) {
+    if (capture.state === 'verified' && capture.verification_version !== 2) {
+      await setLocalCaptureState(capture.capture_id, 'stored', 'Starší potvrzení ověřilo pouze přenos. Před smazáním je nutné nové ověření média serverem.')
+    } else if (capture.state === 'recording') {
+      await setLocalCaptureState(capture.capture_id, 'failed', 'Aplikace skončila před dokončením záznamu. Bloky zůstaly uložené; před ručním odesláním se ověří jejich úplnost.')
+    } else if (['uploading', 'uploaded', 'validating'].includes(capture.state)) {
+      await setLocalCaptureState(capture.capture_id, 'stored')
+    }
+  }
 }

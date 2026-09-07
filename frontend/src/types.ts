@@ -1,4 +1,4 @@
-export type DeviceState = 'disconnected' | 'ready' | 'armed' | 'recording' | 'stored' | 'uploading' | 'verified'
+export type DeviceState = 'disconnected' | 'ready' | 'armed' | 'recording' | 'stored' | 'uploading' | 'uploaded' | 'validating' | 'verified' | 'failed'
 
 export interface Device {
   device_id: string
@@ -23,6 +23,7 @@ export interface Session {
   name: string
   state: 'created' | 'armed' | 'recording' | 'stopped' | 'closed'
   created_at: string
+  last_control?: { type: string; payload: Record<string, unknown> } | null
   closed_at: string | null
   devices: Record<string, Device>
 }

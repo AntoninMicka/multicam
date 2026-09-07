@@ -85,3 +85,13 @@ Otevřete `https://localhost:18000` (certifikát musí pokrýt i localhost). V p
 - Zastavte službu i kontejner, bezpečně odpojte SSD a ověřte, že kontejner/služba nenastartuje. Disk neodpojujte během zápisu.
 
 Služba vyžaduje mount SSD a správný identifikátor. Backend kontroluje mount i skutečnou možnost zápisu před inicializací a při HTTP požadavcích i zápisech stavu. Při nedostupnosti vrací 503 / odmítne start; nemá náhradní datový adresář na flash. Dočasné ZIPy a pracovní soubory jsou také na SSD. Rozpracované přenosy zůstávají na odesílajících backendech a po obnovení storage se opakují. Router originály pouze ověřeně ukládá; dostupnost SSD nenahrazuje další zálohu.
+
+## Aktualizace s rollbackem
+
+Na notebooku znovu sestavte release a přeneste jej na SSD. Uvnitř LXC po ukončení aktivní relace spusťte:
+
+```sh
+sh /srv/multicam-ssd/app/deploy/omnia/update-container.sh /srv/multicam-ssd/multicam-omnia.tar.gz
+```
+
+Skript před zastavením služby ověří SSD, bezpečný obsah archivu a syntaxi Pythonu. Uchová předchozí aplikaci, aktualizuje službu a závislosti a počká na zdravý backend. Při chybě instalace/startu vrátí předchozí aplikaci; data, identita backendu, párování, IP kamery a TLS konfigurace leží mimo adresář aplikace. Rollback aplikace nevrací databázová data ani balíčky Debianu; aktualizujte proto až mimo nahrávání. Zálohy aplikace odstraňujte až po ověření nové verze.

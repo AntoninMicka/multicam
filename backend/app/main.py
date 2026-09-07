@@ -43,6 +43,10 @@ from .mosaic import MosaicError, render_mosaic
 from .network import interface_addresses
 from .store import SessionNotFoundError, store
 from .uploads import UploadConflictError, UploadNotFoundError, uploads
+from .ip_cameras import IPCameraService
+from .media_validation import MediaValidationError
+
+ip_cameras = IPCameraService(store, uploads)
 from .websocket import connections
 from .vision import VisionRequest, run_vision_job
 from .zerotier import ZeroTierError, join as join_zerotier, status as zerotier_status
@@ -61,6 +65,9 @@ async def lifespan(_: FastAPI):
         conversion_task.cancel()
         transfer_task.cancel()
         await asyncio.gather(sync_task, conversion_task, transfer_task, return_exceptions=True)
+        await ip_cameras.stop()
+        if ip_cameras.finishing:
+            await asyncio.gather(*ip_cameras.finishing, return_exceptions=True)
         await discovery.stop()
 
 
@@ -449,7 +456,12 @@ async def federation_take(
             check_storage()
             if session_id in deleted_session_ids:
                 raise HTTPException(status_code=410, detail="Relace byla lokálně smazána")
-            imported = await asyncio.to_thread(import_take, uploads.root, temporary, session_id, take_id)
+            imported = await asyncio.to_thread(import_take, uploads.root, temporary, session_id, take_id, verify_media=True)
+    except MediaValidationError as error:
+        diagnostics = uploads.root / ".diagnostics"
+        diagnostics.mkdir(exist_ok=True)
+        os.replace(temporary, diagnostics / f"{session_id}-{take_id}-{uuid4()}.invalid.zip")
+        raise HTTPException(status_code=422, detail={"code": error.code, "message": str(error)}) from error
     except BundleError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     finally:
@@ -616,6 +628,8 @@ async def receive_session_state(request: Request, x_multicam_federation: str | N
 
 
 async def delete_session_data(session_id: UUID) -> None:
+    if any(job["metadata"]["session_id"] == str(session_id) for job in ip_cameras.jobs.values()):
+        raise HTTPException(status_code=409, detail="IP kamera ještě dokončuje uložení záznamu")
     try:
         await store.delete(session_id)
     except SessionNotFoundError as error:
@@ -675,6 +689,22 @@ async def register_device(session_id: UUID, data: DeviceRegistration) -> Device:
     except (OSError, ValueError) as error:
         raise HTTPException(status_code=409, detail=f"Kameru nelze registrovat: {error}") from error
     await connections.broadcast(session_id, {"type": "session.updated", "payload": (await store.get(session_id)).model_dump(mode="json")})
+    return device
+
+
+@app.post("/api/sessions/{session_id}/ip-cameras", response_model=Device)
+async def add_ip_camera(session_id: UUID, request: Request) -> Device:
+    require_local_operator(request)
+    data = await request.json()
+    if (await store.get(session_id)).state == SessionState.RECORDING:
+        raise HTTPException(status_code=409, detail="IP kameru přidejte před nahráváním")
+    url = str(data.get("url", ""))
+    parsed = urlparse(url)
+    if parsed.scheme not in {"rtsp", "http", "https"} or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="Použijte RTSP nebo HTTP(S) URL kamery")
+    device = await register_device(session_id, DeviceRegistration(name=data.get("name", "IP kamera"), role=data.get("role", "secondary_camera")))
+    ip_cameras.configure(device.device_id, url)
+    device = await store.set_device_source(session_id, device.device_id, "ip_camera")
     return device
 
 
@@ -780,12 +810,16 @@ async def complete_upload(session_id: UUID, device_id: UUID, upload_id: UUID) ->
     await require_device(session_id, device_id)
     if (await store.get(session_id)).state == SessionState.RECORDING:
         raise HTTPException(status_code=423, detail="Upload čeká na ukončení záznamu")
+    await store.set_device_state(session_id, device_id, DeviceState.VALIDATING)
     try:
         receipt = await uploads.complete(session_id, device_id, upload_id)
     except UploadNotFoundError as error:
         raise HTTPException(status_code=404, detail="Upload not found") from error
     except UploadConflictError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except MediaValidationError as error:
+        await store.set_device_state(session_id, device_id, DeviceState.FAILED)
+        raise HTTPException(status_code=422, detail={"code": error.code, "message": str(error)}) from error
     next_state = DeviceState.VERIFIED if uploads.capture_verified(session_id, device_id, receipt.capture_id) else DeviceState.UPLOADING
     updated = await store.set_device_state(session_id, device_id, next_state)
     await connections.broadcast(session_id, {"type": "session.updated", "payload": updated.model_dump(mode="json")})
@@ -1116,6 +1150,16 @@ async def _apply_control(session_id: UUID, message: SocketMessage, *, relay: boo
         session = await store.set_state(session_id, SessionState.STOPPED, revision=revision, control=message.model_dump(mode="json"))
     else:
         raise HTTPException(status_code=400, detail="Unsupported federation control")
+    if message.type == "control.arm":
+        for ack in await ip_cameras.arm(session_id):
+            event = {"type": "control.ack", "payload": {**ack, "command_id": message.payload.get("command_id")}}
+            await connections.broadcast(session_id, event)
+            await federation.broadcast_json("/api/federation/event", {"session_id": str(session_id), "message": event})
+    elif message.type == "recording.start":
+        await ip_cameras.start(session_id, UUID(message.payload["take_id"]))
+    elif message.type == "recording.stop":
+        await ip_cameras.stop(session_id)
+    session = await store.get(session_id)
     applied_controls[session_id] = revision
     await connections.broadcast(session_id, {"type": "session.updated", "payload": session.model_dump(mode="json")})
     await connections.broadcast(session_id, message.model_dump(mode="json"))
@@ -1137,6 +1181,12 @@ async def session_socket(websocket: WebSocket, session_id: UUID, device_id: UUID
     except SessionNotFoundError:
         await websocket.close(code=4404, reason="Session not found")
         return
+    if device_id is not None:
+        if str(device_id) not in session.devices:
+            await websocket.close(code=4404, reason="Device not found")
+            return
+        await store.set_connected(session_id, device_id, True)
+        session = await store.get(session_id)
     await connections.connect(session_id, websocket)
     await websocket.send_json({"type": "session.snapshot", "payload": session.model_dump(mode="json")})
     try:

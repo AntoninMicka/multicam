@@ -1,7 +1,24 @@
 # Roadmapa
 
-> **Stav projektu:** funkční MVP uzavřeno pro zamýšlené použití. Nezaškrtnuté body
-> zůstávají jako volitelné náměty pro případné budoucí terénní zpevnění.
+> **Stav projektu:** probíhá zpevnění záznamu, obnova mobilních klientů,
+> rozšíření federace a příprava provozu na Turris Omnia se SSD.
+
+## Aktuální TODO (2026-09-07)
+
+Pořadí: dokončit rozpracované změny, obnova telefonu, discovery, IP kamery,
+instalace/aktualizace Omnie, poté oprava integrity MediaRecorder podle přílohy.
+
+- [x] Rovnocenné backendy, předání directora a nezávislý storage, terminální ukončení relace a lokální mazání historie; integrační test tří procesů.
+- [x] Základ profilu Omnia: Debian LXC na SSD, guard mountu a identity disku, sestavený frontend.
+- [ ] Obnova telefonu po uspání: reconnect WebSocketu, načtení skutečného stavu relace, obnovení kamery/Wake Locku a bezpečné doposlání lokálních záznamů.
+- [ ] Discovery na všech dostupných IPv4 rozhraních včetně průběžného přidání/odebrání rozhraní; fungující adresy pro federaci a unicast fallback.
+- [ ] IP kamery: registrace RTSP/HTTP zdroje na backendu, ARM/START/STOP přes společnou relaci, FFmpeg záznam, telemetrie, validace a přenos na storage; UI a testy.
+- [ ] Omnia: instalační a aktualizační skript včetně kontroly SSD, zálohy/rollbacku verze aplikace a zachování dat i konfigurace.
+- [ ] Audit příčiny chybějící WebM inicializace: MediaRecorder lifecycle, chunk 0, IDB transakce, finalizace, opakované starty a retry; bez rekonstrukce poškozených souborů.
+- [ ] Kontrola chunků 0..N, duplicit, počtu, velikostí a EBML hlavičky před uploadem; diagnostická metadata, per-capture fronta zápisů.
+- [ ] Oddělit transport a validaci média: uploaded/validating/verified/failed; FFprobe validace kontejneru a video streamu, media_validation_failed, uchování serverové i telefonní kopie.
+- [ ] Regresní testy pořadí 2,0,1, chybějící nuly/mezery, IDB a finálního dataavailable; integrační průchod skutečného WebM od IDB po server.
+- [ ] Závěrečný build, automatické testy a aktualizace dokumentace. Reálné uspání iPhonu, fyzické IP kamery a provoz na konkrétní Omnii zůstávají terénním ověřením.
 
 Stavy: `[x]` implementováno, `[~]` implementováno
 částečně nebo čeká na ověření na cílových zařízeních, `[ ]` dosud není hotovo.

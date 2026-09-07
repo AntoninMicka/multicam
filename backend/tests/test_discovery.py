@@ -77,3 +77,39 @@ def test_own_multicast_loopback_is_not_reported_as_id_collision(monkeypatch, tmp
     assert service.diagnostics()["last_rejection"] is None
     service.receive(payload, "10.10.0.2")
     assert service.diagnostics()["last_rejection"] == "jiný pult používá stejné backend ID"
+
+
+def test_memberships_retry_failed_interfaces_and_remove_disconnected(monkeypatch, tmp_path):
+    import socket
+    monkeypatch.setenv('MULTICAM_BACKEND_ID_FILE', str(tmp_path / 'id'))
+    service = BackendDiscovery()
+    addresses = ['192.168.1.4', '10.10.0.4']
+    monkeypatch.setattr(service, '_current_multicast_ips', lambda: addresses)
+    calls = []
+    failed = {'10.10.0.4'}
+    class Sock:
+        def setsockopt(self, level, option, membership):
+            ip = socket.inet_ntoa(membership[4:])
+            calls.append((option, ip))
+            if ip in failed:
+                raise OSError('temporarily down')
+    sock = Sock()
+    service.refresh_memberships(sock)
+    assert service.multicast_interface_ips == ['192.168.1.4']
+    failed.clear()
+    service.refresh_memberships(sock)
+    assert set(service.multicast_interface_ips) == set(addresses)
+    addresses.pop(0)
+    service.refresh_memberships(sock)
+    assert service.multicast_interface_ips == ['10.10.0.4']
+    assert (socket.IP_DROP_MEMBERSHIP, '192.168.1.4') in calls
+
+
+def test_preserves_routes_received_on_different_interfaces(monkeypatch, tmp_path):
+    monkeypatch.setenv('MULTICAM_BACKEND_ID_FILE', str(tmp_path / 'id'))
+    service = BackendDiscovery()
+    peer_id = str(uuid4())
+    packet = json.dumps({'protocol': PROTOCOL, 'backend_id': peer_id, 'name': 'Peer', 'url': 'https://peer:8000'}).encode()
+    service.receive(packet, '192.168.1.2')
+    service.receive(packet, '10.10.0.2')
+    assert set(service.snapshot()[0]['urls']) == {'https://192.168.1.2:8000', 'https://10.10.0.2:8000'}

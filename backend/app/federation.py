@@ -46,6 +46,7 @@ class Federation:
             # Configs created by the earlier QR handshake already authenticated
             # the peer but did not persist this flag; migrate them automatically.
             self.tls_verify = not bool(saved.get("token"))
+        self._working_urls: dict[str, str] = {}
         self._pairing_codes: dict[str, float] = {}
         self.last_sync_at: str | None = None
         self.last_error: str | None = None
@@ -204,15 +205,34 @@ class Federation:
         with urllib.request.urlopen(request, timeout=10, context=self._ssl_context()) as response:
             return response.read()
 
+    async def request_peer(self, peer_url: str, path: str, *, data: bytes | None = None) -> bytes:
+        peer = next((p for p in self.target_peers() if p["url"] == peer_url), None)
+        candidates = [peer_url]
+        if peer:
+            candidates = [self._working_urls.get(peer["backend_id"], peer_url), peer_url,
+                          *peer.get("urls", []), self.peers[peer["backend_id"]]]
+        last_error = None
+        for candidate in dict.fromkeys(candidates):
+            try:
+                result = await asyncio.to_thread(self._request, f"{candidate}{path}", data=data)
+                if peer:
+                    self._working_urls[peer["backend_id"]] = candidate
+                return result
+            except urllib.error.HTTPError:
+                raise  # An application rejection is not a routing problem.
+            except OSError as error:
+                last_error = error
+        raise last_error or OSError("No reachable peer interface")
+
     async def get_snapshot(self, peer_url: str) -> dict[str, Any]:
-        return json.loads(await asyncio.to_thread(self._request, f"{peer_url}/api/federation/snapshot"))
+        return json.loads(await self.request_peer(peer_url, "/api/federation/snapshot"))
 
     async def get_json(self, peer_url: str, path: str) -> Any:
-        return json.loads(await asyncio.to_thread(self._request, f"{peer_url}{path}"))
+        return json.loads(await self.request_peer(peer_url, path))
 
     async def post_json(self, peer_url: str, path: str, payload: dict) -> None:
         data = json.dumps(payload, separators=(",", ":")).encode()
-        await asyncio.to_thread(self._request, f"{peer_url}{path}", data=data)
+        await self.request_peer(peer_url, path, data=data)
 
     async def broadcast_json(self, path: str, payload: dict) -> None:
         if not self.enabled:
@@ -230,6 +250,9 @@ class Federation:
     async def send_bundle(self, peer_url: str, path: Path, session_id: str, take_id: str) -> None:
         if not self.enabled or not self.transfer_enabled:
             return
+        target = next((p for p in self.target_peers() if p["url"] == peer_url), None)
+        if target:
+            peer_url = self._working_urls.get(target["backend_id"], peer_url)
         query = f"?session_id={session_id}&take_id={take_id}&source_backend_id={discovery.backend_id}"
         def transfer() -> None:
             request = urllib.request.Request(

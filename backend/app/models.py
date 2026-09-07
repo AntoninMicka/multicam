@@ -16,6 +16,9 @@ class DeviceState(StrEnum):
     RECORDING = "recording"
     STORED = "stored"
     UPLOADING = "uploading"
+    UPLOADED = "uploaded"
+    VALIDATING = "validating"
+    FAILED = "failed"
     VERIFIED = "verified"
 
 
@@ -48,6 +51,7 @@ class Device(BaseModel):
     capabilities: DeviceCapabilities = Field(default_factory=DeviceCapabilities)
     connected: bool = True
     last_seen_at: datetime = Field(default_factory=utc_now)
+    source_kind: str = "browser"
     owner_backend_id: str | None = None
     owner_backend_name: str | None = None
 
@@ -98,6 +102,8 @@ class UploadStatus(BaseModel):
     total_chunks: int
     size_bytes: int
     complete: bool = False
+    state: str = "uploading"
+    error: dict | None = None
 
 
 class UploadReceipt(BaseModel):
@@ -108,6 +114,8 @@ class UploadReceipt(BaseModel):
     file_path: str
     size_bytes: int
     sha256: str
+    transport_verified: bool = True
+    media_verified: bool | None = None
     verified: bool = True
 
 

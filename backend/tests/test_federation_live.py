@@ -12,7 +12,7 @@ from uuid import uuid4
 import httpx
 
 
-def test_three_peers_storage_handover_and_local_history(tmp_path):
+def test_three_peers_storage_handover_and_local_history(tmp_path, webm_bytes):
     project = Path(__file__).resolve().parents[2]
     ids = [str(uuid4()) for _ in range(3)]
     ports = []
@@ -77,19 +77,15 @@ def test_three_peers_storage_handover_and_local_history(tmp_path):
         assert client.post(urls[0] + f'/api/sessions/{sid}/devices', json={'name': 'Duplicate main', 'role': 'main_camera'}).status_code == 409
         capture_id, take_id = str(uuid4()), str(uuid4())
         base = f"/api/sessions/{sid}/devices/{device['device_id']}/uploads"
-        for kind, payload, name, mime in [('recording', b'original-video', 'camera.webm', 'video/webm'),
-                                           ('telemetry', b'{"event":"recording_started"}\n', 'timing.jsonl', 'application/json')]:
-            digest = hashlib.sha256(payload).hexdigest()
-            upload = post(1, base, {'capture_id': capture_id, 'take_id': take_id, 'kind': kind,
-                                    'file_name': name, 'mime_type': mime, 'size_bytes': len(payload),
-                                    'sha256': digest, 'chunk_size': 256 * 1024, 'total_chunks': 1})
-            response = client.put(urls[1] + base + f"/{upload['upload_id']}/chunks/0", content=payload,
-                                  headers={'X-Chunk-SHA256': digest})
-            assert response.is_success, response.text
-            post(1, base + f"/{upload['upload_id']}/complete")
+        fixture = tmp_path / 'browser-fixture.webm'
+        fixture.write_bytes(webm_bytes)
+        browser = subprocess.run(['node', '--loader', './tests/ts-loader.mjs', 'tests/upload-webm.mjs',
+                                  urls[1], str(fixture), sid, device['device_id'], capture_id, take_id],
+                                 cwd=project / 'frontend', capture_output=True, text=True, timeout=30)
+        assert browser.returncode == 0, browser.stdout + browser.stderr
         storage_video = roots[2] / 'sessions' / sid / 'devices' / device['device_id'] / 'recordings' / f'{capture_id}.webm'
         wait_for(storage_video.exists)
-        assert storage_video.read_bytes() == b'original-video'
+        assert storage_video.read_bytes() == webm_bytes
         wait_for(lambda: client.get(urls[1] + '/api/federation/transfers').json()['pending_count'] == 0)
         assert not (roots[0] / 'sessions' / sid / 'devices' / device['device_id'] / 'recordings').exists()
         post(0, f'/api/sessions/{sid}/close')

@@ -192,7 +192,7 @@ def import_session(data_dir: Path, source: Path) -> UUID:
     return session_id
 
 
-def import_take(data_dir: Path, source: Path, expected_session_id: UUID, expected_take_id: UUID) -> int:
+def import_take(data_dir: Path, source: Path, expected_session_id: UUID, expected_take_id: UUID, *, verify_media: bool = False) -> int:
     """Verify and merge a replicated take without replacing existing local data."""
     data_dir = data_dir.resolve()
     destination = data_dir / str(expected_session_id)
@@ -240,6 +240,13 @@ def import_take(data_dir: Path, source: Path, expected_session_id: UUID, expecte
                 if target.exists():
                     if target.stat().st_size != size or _sha256(target) != digest.hexdigest():
                         raise BundleError(f"Conflicting replicated file: {relative}")
+            if verify_media:
+                from .media_validation import validate_media
+                for relative in expected:
+                    suffix = Path(relative).suffix.lower()
+                    if suffix in {".webm", ".mp4", ".mov"}:
+                        mime = {".webm": "video/webm", ".mp4": "video/mp4", ".mov": "video/quicktime"}[suffix]
+                        validate_media(staging.joinpath(*PurePosixPath(relative).parts), mime)
             # Publish receipts only after their immutable artifacts are durable.
             for relative in sorted(expected, key=lambda name: name.endswith("upload.json")):
                 if relative in ignored:

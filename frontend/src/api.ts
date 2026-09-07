@@ -120,6 +120,8 @@ export interface UploadReceipt {
   file_path: string
   size_bytes: number
   sha256: string
+  media_verified: boolean | null
+  transport_verified: boolean
   verified: boolean
 }
 
@@ -140,8 +142,22 @@ export interface CaptureMedia {
   available_locally: boolean
 }
 
+export class ApiError extends Error {
+  code?: string
+  status: number
+  constructor(message: string, status: number, code?: string) {
+    super(message)
+    this.status = status
+    this.code = code
+  }
+}
+
 async function json<T>(response: Response): Promise<T> {
-  if (!response.ok) throw new Error((await response.json()).detail ?? 'Požadavek selhal')
+  if (!response.ok) {
+    const body = await response.json()
+    const detail = body.detail
+    throw new ApiError(typeof detail === 'string' ? detail : detail?.message ?? 'Požadavek selhal', response.status, detail?.code)
+  }
   return response.json() as Promise<T>
 }
 
@@ -315,6 +331,7 @@ async function retry<T>(operation: () => Promise<T>, attempts = 3): Promise<T> {
     try {
       return await operation()
     } catch (reason) {
+      if (reason instanceof ApiError && reason.code === 'media_validation_failed') throw reason
       lastError = reason
       if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt))
     }
@@ -330,6 +347,7 @@ export async function uploadArtifact(
   artifact: Blob,
   onProgress: (percent: number) => void,
   takeId?: string,
+  onPhase?: (phase: 'uploaded' | 'validating') => Promise<void>,
 ): Promise<UploadReceipt> {
   const chunkSize = 4 * 1024 * 1024
   const totalChunks = Math.ceil(artifact.size / chunkSize)
@@ -367,5 +385,7 @@ export async function uploadArtifact(
     completedChunks += 1
     onProgress(Math.round(completedChunks / totalChunks * 100))
   }
+  await onPhase?.('uploaded')
+  await onPhase?.('validating')
   return retry(() => fetch(`${base}/${upload.upload_id}/complete`, { method: 'POST' }).then(json<UploadReceipt>))
 }

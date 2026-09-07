@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from .storage_guard import check_storage
+from .media_validation import MediaValidationError, validate_media
 
 from .models import CaptureMedia, Session, UploadCreate, UploadReceipt, UploadStatus
 from .clap import detect_flash
@@ -78,6 +79,7 @@ class UploadService:
             **data.model_dump(mode="json"),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "complete": False,
+            "state": "uploading",
         }
         self._write_metadata(upload_dir / "upload.json", metadata)
         return self.status(session_id, device_id, upload_id)
@@ -92,6 +94,8 @@ class UploadService:
             total_chunks=metadata["total_chunks"],
             size_bytes=metadata["size_bytes"],
             complete=metadata.get("complete", False),
+            state=metadata.get("state", "uploaded" if metadata.get("complete") else "uploading"),
+            error=metadata.get("error"),
         )
 
     async def put_chunk(
@@ -132,6 +136,10 @@ class UploadService:
         async with lock:
             metadata = self._read_metadata(session_id, device_id, upload_id)
             if metadata.get("complete"):
+                if metadata.get("kind", "recording") == "recording" and not metadata.get("media_validation", {}).get("verified"):
+                    await self.verify_recording(session_id, device_id, upload_id, metadata, self.root / metadata["receipt"]["file_path"])
+                    metadata["receipt"]["media_verified"] = True
+                    self._write_metadata(self._metadata_path(session_id, device_id, upload_id), metadata)
                 return UploadReceipt.model_validate(metadata["receipt"])
             status = self.status(session_id, device_id, upload_id)
             if len(status.received_chunks) != metadata["total_chunks"]:
@@ -162,7 +170,12 @@ class UploadService:
                 temporary.unlink(missing_ok=True)
                 raise UploadConflictError("Final file integrity check failed")
             os.replace(temporary, final_path)
+            metadata["state"] = "uploaded"
+            metadata["transport_verified"] = True
+            metadata["diagnostic_file_path"] = str(final_path.relative_to(self.root))
+            self._write_metadata(self._metadata_path(session_id, device_id, upload_id), metadata)
             if metadata.get("kind", "recording") == "recording":
+                await self.verify_recording(session_id, device_id, upload_id, metadata, final_path)
                 await asyncio.to_thread(self.normalize_recording, final_path)
             receipt = UploadReceipt(
                 upload_id=upload_id,
@@ -172,11 +185,35 @@ class UploadService:
                 file_path=str(final_path.relative_to(self.root)),
                 size_bytes=size,
                 sha256=digest.hexdigest(),
+                media_verified=True if metadata.get("kind", "recording") == "recording" else None,
             )
             metadata["complete"] = True
+            metadata["state"] = "verified"
             metadata["receipt"] = receipt.model_dump(mode="json")
             self._write_metadata(self._metadata_path(session_id, device_id, upload_id), metadata)
             return receipt
+
+    async def verify_recording(self, session_id: UUID, device_id: UUID, upload_id: UUID, metadata: dict, path: Path) -> None:
+        metadata_path = self._metadata_path(session_id, device_id, upload_id)
+        metadata["state"] = "validating"
+        self._write_metadata(metadata_path, metadata)
+        try:
+            probe = await asyncio.to_thread(validate_media, path, metadata["mime_type"])
+        except MediaValidationError as error:
+            metadata["complete"] = False
+            metadata["state"] = "failed"
+            metadata["error"] = {"code": error.code, "message": str(error)}
+            metadata["media_validation"] = {"verified": False}
+            if metadata.get("receipt"):
+                metadata["receipt"]["verified"] = False
+                metadata["receipt"]["media_verified"] = False
+            self._write_metadata(metadata_path, metadata)
+            logging.getLogger(__name__).error("media_validation_failed capture_id=%s file=%s error=%s", metadata["capture_id"], path, error)
+            raise
+        metadata["media_validation"] = {"verified": True, "probe": probe, "validated_at": datetime.now(timezone.utc).isoformat()}
+        metadata["state"] = "verified"
+        metadata.pop("error", None)
+        self._write_metadata(metadata_path, metadata)
 
     def capture_verified(self, session_id: UUID, device_id: UUID, capture_id: UUID) -> bool:
         uploads_dir = self._device_dir(session_id, device_id) / ".uploads"
@@ -184,7 +221,9 @@ class UploadService:
         for metadata_path in uploads_dir.glob("*/upload.json"):
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             if metadata.get("capture_id") == str(capture_id) and metadata.get("complete"):
-                completed.add(metadata.get("kind", "recording"))
+                kind = metadata.get("kind", "recording")
+                if kind != "recording" or metadata.get("media_validation", {}).get("verified"):
+                    completed.add(kind)
         return completed == {"recording", "telemetry"}
 
     def _take_id(self, recording: dict, telemetry: dict | None) -> UUID | None:

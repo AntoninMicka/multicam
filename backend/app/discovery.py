@@ -50,6 +50,7 @@ class BackendDiscovery:
         self.name = os.getenv("MULTICAM_BACKEND_NAME", socket.gethostname())
         self.backend_id = self._backend_id()
         self.peers: dict[str, Peer] = {}
+        self.peer_routes: dict[str, dict[str, float]] = {}
         self.transport: asyncio.DatagramTransport | None = None
         self.task: asyncio.Task | None = None
         self.multicast_interface_ips: list[str] = []
@@ -61,12 +62,13 @@ class BackendDiscovery:
         self.last_rejection: str | None = None
 
     def _current_multicast_ips(self) -> list[str]:
-        if self.interface_ip != "0.0.0.0":
-            return [self.interface_ip]
         candidates = [
             item["address"] for item in interface_addresses()
             if item["family"] == "ipv4"
         ]
+        if self.interface_ip != "0.0.0.0" and self.interface_ip in candidates:
+            candidates.remove(self.interface_ip)
+            candidates.insert(0, self.interface_ip)
         return list(dict.fromkeys(candidates))
 
     @staticmethod
@@ -136,6 +138,7 @@ class BackendDiscovery:
         except (KeyError, TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
             self.last_rejection = "neplatný discovery paket"
             return
+        self.peer_routes.setdefault(peer_id, {})[url] = time.monotonic()
         self.peers[peer_id] = Peer(peer_id, name[:80], url, address, time.monotonic(), pairing_code)
         self.last_rejection = None
 
@@ -181,8 +184,11 @@ class BackendDiscovery:
     def snapshot(self) -> list[dict]:
         now = time.monotonic()
         self.peers = {key: peer for key, peer in self.peers.items() if now - peer.last_seen <= self.ttl}
+        self.peer_routes = {key: {url: seen for url, seen in routes.items() if now - seen <= self.ttl}
+                            for key, routes in self.peer_routes.items() if key in self.peers}
         return [{
             **{key: value for key, value in asdict(peer).items() if key != "pairing_code"},
+            "urls": list(self.peer_routes.get(peer.backend_id, {})),
             "last_seen_seconds_ago": round(now - peer.last_seen, 1),
         } for peer in self.peers.values()]
 
@@ -208,18 +214,10 @@ class BackendDiscovery:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             socket.inet_aton(self.interface_ip)  # validate before starting the task
             sock.bind(("", self.port))
-            self.multicast_interface_ips = self._current_multicast_ips()
-            memberships = self.multicast_interface_ips or ["0.0.0.0"]
-            joined = 0
-            for interface_ip in memberships:
-                try:
-                    membership = socket.inet_aton(self.group) + socket.inet_aton(interface_ip)
-                    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
-                    joined += 1
-                except OSError as error:
-                    logger.warning("Discovery multicast is unavailable on %s: %s", interface_ip, error)
-            if not joined:
-                raise OSError("No interface accepted the discovery multicast group")
+            self.multicast_interface_ips = []
+            self.refresh_memberships(sock)
+            # Even without a multicast-capable interface keep receiving unicast,
+            # and retry failed memberships when interfaces become available.
             sock.setblocking(False)
             self.transport, _ = await loop.create_datagram_endpoint(lambda: _Protocol(self), sock=sock)
         except OSError as error:
@@ -228,6 +226,25 @@ class BackendDiscovery:
             logger.warning("Backend discovery is unavailable: %s", error)
             return
         self.task = asyncio.create_task(self._announce_loop())
+
+    def refresh_memberships(self, sock) -> None:
+        current = set(self._current_multicast_ips())
+        joined = set(self.multicast_interface_ips)
+        for address in joined - current:
+            try:
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP,
+                                socket.inet_aton(self.group) + socket.inet_aton(address))
+            except OSError:
+                pass
+            joined.discard(address)
+        for address in current - joined:
+            try:
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+                                socket.inet_aton(self.group) + socket.inet_aton(address))
+                joined.add(address)
+            except OSError as error:
+                logger.debug("Discovery will retry interface %s: %s", address, error)
+        self.multicast_interface_ips = sorted(joined)
 
     async def _announce_loop(self) -> None:
         unicast_targets = [
@@ -238,23 +255,7 @@ class BackendDiscovery:
         while True:
             if self.transport:
                 raw_socket = self.transport.get_extra_info("socket")
-                current_ips = self._current_multicast_ips()
-                previous = set(self.multicast_interface_ips)
-                current = set(current_ips)
-                for interface_ip in current - previous:
-                    try:
-                        membership = socket.inet_aton(self.group) + socket.inet_aton(interface_ip)
-                        raw_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
-                        logger.info("Discovery added interface %s", interface_ip)
-                    except OSError as error:
-                        logger.warning("Discovery could not add interface %s: %s", interface_ip, error)
-                for interface_ip in previous - current:
-                    try:
-                        membership = socket.inet_aton(self.group) + socket.inet_aton(interface_ip)
-                        raw_socket.setsockopt(socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP, membership)
-                    except OSError:
-                        pass
-                self.multicast_interface_ips = current_ips
+                self.refresh_memberships(raw_socket)
                 active_pairing_code = self.pairing_code if time.monotonic() < self.pairing_expires_at else None
                 payload = json.dumps({
                     "protocol": PROTOCOL, "backend_id": self.backend_id,
@@ -269,7 +270,10 @@ class BackendDiscovery:
                     except OSError as error:
                         logger.debug("Discovery announce failed on %s: %s", interface_ip, error)
                 for target in unicast_targets:
-                    self.transport.sendto(payload, target)
+                    try:
+                        self.transport.sendto(payload, target)
+                    except OSError as error:
+                        logger.debug("Discovery unicast failed: %s", error)
             await asyncio.sleep(self.interval)
 
     async def stop(self) -> None:

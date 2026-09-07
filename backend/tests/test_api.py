@@ -290,14 +290,16 @@ def test_legacy_session_without_manifest_is_recovered(tmp_path) -> None:
     assert media[0].telemetry_url is None
 
 
-def test_chunked_upload_is_idempotent_and_verified(tmp_path, monkeypatch) -> None:
+def test_chunked_upload_is_idempotent_and_verified(tmp_path, monkeypatch, webm_bytes) -> None:
     session = asyncio.run(request("POST", "/api/sessions", json={"name": "Upload test"})).json()
     device = asyncio.run(request(
         "POST",
         f"/api/sessions/{session['session_id']}/devices",
         json={"name": "Kamera upload", "role": "secondary_camera"},
     )).json()
-    content = b"a" * (256 * 1024) + b"last chunk"
+    content = webm_bytes
+    chunk_size = max(256 * 1024, (len(content) + 1) // 2)
+    assert len(content) > chunk_size
     digest = hashlib.sha256(content).hexdigest()
     base = f"/api/sessions/{session['session_id']}/devices/{device['device_id']}/uploads"
     upload = asyncio.run(request("POST", base, json={
@@ -305,11 +307,11 @@ def test_chunked_upload_is_idempotent_and_verified(tmp_path, monkeypatch) -> Non
         "mime_type": "video/webm",
         "size_bytes": len(content),
         "sha256": digest,
-        "chunk_size": 256 * 1024,
+        "chunk_size": chunk_size,
         "total_chunks": 2,
     })).json()
 
-    first = content[:256 * 1024]
+    first = content[:chunk_size]
     first_url = f"{base}/{upload['upload_id']}/chunks/0"
     bad = asyncio.run(request("PUT", first_url, content=first, headers={"X-Chunk-SHA256": "0" * 64}))
     assert bad.status_code == 409
@@ -317,7 +319,7 @@ def test_chunked_upload_is_idempotent_and_verified(tmp_path, monkeypatch) -> Non
     assert asyncio.run(request("PUT", first_url, content=first, headers=headers)).status_code == 200
     assert asyncio.run(request("PUT", first_url, content=first, headers=headers)).status_code == 200
 
-    last = content[256 * 1024:]
+    last = content[chunk_size:]
     last_url = f"{base}/{upload['upload_id']}/chunks/1"
     headers = {"X-Chunk-SHA256": hashlib.sha256(last).hexdigest()}
     assert asyncio.run(request("PUT", last_url, content=last, headers=headers)).status_code == 200
@@ -505,3 +507,48 @@ def test_snapshot_replays_missed_control_once(monkeypatch):
     events = (uploads.root / str(remote.session_id) / 'events.jsonl').read_text().splitlines()
     assert len(events) == 1
     assert json.loads(events[0])['take_id'] == str(UUID(int=8))
+
+
+def test_invalid_recording_is_uploaded_but_never_verified(tmp_path):
+    session = asyncio.run(request('POST', '/api/sessions', json={'name': 'Invalid media'})).json()
+    device = asyncio.run(request('POST', f"/api/sessions/{session['session_id']}/devices", json={'name': 'Camera', 'role': 'secondary_camera'})).json()
+    # A cluster without an EBML initialization header reproduces the reported corruption.
+    content = bytes.fromhex('1f43b675') + b'broken-cluster'
+    base = f"/api/sessions/{session['session_id']}/devices/{device['device_id']}/uploads"
+    digest = hashlib.sha256(content).hexdigest()
+    upload = asyncio.run(request('POST', base, json={'file_name': 'broken.webm', 'mime_type': 'video/webm',
+                                                    'size_bytes': len(content), 'sha256': digest,
+                                                    'chunk_size': 256 * 1024, 'total_chunks': 1})).json()
+    assert asyncio.run(request('PUT', base + f"/{upload['upload_id']}/chunks/0", content=content,
+                               headers={'X-Chunk-SHA256': digest})).is_success
+    failed = asyncio.run(request('POST', base + f"/{upload['upload_id']}/complete"))
+    assert failed.status_code == 422
+    assert failed.json()['detail']['code'] == 'media_validation_failed'
+    status = asyncio.run(request('GET', base + f"/{upload['upload_id']}")).json()
+    assert status['state'] == 'failed'
+    assert status['complete'] is False
+    metadata_path = next(uploads.root.glob('*/devices/*/.uploads/*/upload.json'))
+    metadata = json.loads(metadata_path.read_text())
+    assert metadata['transport_verified'] is True
+    assert not metadata['media_validation']['verified']
+    assert (uploads.root / metadata['diagnostic_file_path']).read_bytes() == content
+    assert asyncio.run(request('POST', base + f"/{upload['upload_id']}/complete")).status_code == 422
+
+
+def test_ffprobe_rejects_wrong_container_audio_only_and_unavailable_probe(tmp_path, monkeypatch, webm_bytes):
+    import subprocess
+    from app.media_validation import validate_media, MediaValidationError
+    source = tmp_path / 'valid.webm'
+    source.write_bytes(webm_bytes)
+    assert validate_media(source, 'video/webm')['streams'][0]['codec_type'] == 'video'
+    with pytest.raises(MediaValidationError, match='Kontejner'):
+        validate_media(source, 'video/mp4')
+    audio = tmp_path / 'audio.webm'
+    subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'sine=duration=0.1', '-c:a', 'libopus', str(audio)], check=True)
+    with pytest.raises(MediaValidationError, match='video stream'):
+        validate_media(audio, 'video/webm')
+    def unavailable(*args, **kwargs):
+        raise FileNotFoundError('ffprobe')
+    monkeypatch.setattr(subprocess, 'run', unavailable)
+    with pytest.raises(MediaValidationError, match='FFprobe'):
+        validate_media(source, 'video/webm')
