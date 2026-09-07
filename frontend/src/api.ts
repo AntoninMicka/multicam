@@ -36,9 +36,13 @@ export interface FederationConfig {
   tls_verify: boolean
   last_sync_at: string | null
   last_error: string | null
-  role: 'standalone' | 'leader' | 'follower'
-  leader_backend_id: string | null
-  backup_to_follower: boolean
+  role: 'peer'
+  is_director: boolean
+  is_storage: boolean
+  director_backend_id: string
+  storage_backend_id: string
+  assignment_revision: number
+  peers: BackendInfo[]
 }
 
 export function getBackends(): Promise<BackendStatus> {
@@ -78,16 +82,22 @@ export function setFederationTransfer(transferEnabled: boolean): Promise<Federat
   }).then(json<FederationConfig>)
 }
 
-export function setFederationBackup(backupToFollower: boolean): Promise<FederationConfig> {
-  return fetch('/api/federation/config', {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ backup_to_follower: backupToFollower }),
+export function setFederationRoles(directorBackendId: string, storageBackendId: string): Promise<FederationConfig> {
+  return fetch('/api/federation/roles', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ director_backend_id: directorBackendId, storage_backend_id: storageBackendId }),
   }).then(json<FederationConfig>)
+}
+
+export function closeSession(id: string): Promise<Session> {
+  return fetch(`/api/sessions/${id}/close`, { method: 'POST' }).then(json<Session>)
 }
 
 export interface FederationTransferStatus {
   pending_count: number
   deferred: boolean
-  direction: 'follower_to_leader' | 'leader_to_follower_backup'
+  direction: 'to_storage'
+  storage_backend_id: string
 }
 
 export function getFederationTransfers(): Promise<FederationTransferStatus> {

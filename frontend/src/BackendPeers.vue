@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { createPairingOffer, getBackends, getFederationConfig, getFederationTransfers, joinPairingOffer, pingBackends, setFederationBackup, setFederationTransfer, type BackendInfo, type BackendPingResult } from './api'
+import { createPairingOffer, getBackends, getFederationConfig, getFederationTransfers, joinPairingOffer, pingBackends, setFederationRoles, setFederationTransfer, type BackendInfo, type BackendPingResult } from './api'
 
-const emit = defineEmits<{ (event: 'join-session', sessionId: string): void }>()
+const emit = defineEmits<{ (event: 'join-session', sessionId: string): void; (event: 'director-changed', isDirector: boolean): void }>()
 
 const peers = ref<BackendInfo[]>([])
 const own = ref<BackendInfo | null>(null)
@@ -14,8 +14,12 @@ const pairingInput = ref('')
 const pairingMessage = ref('')
 const lastSyncAt = ref<string | null>(null)
 const syncError = ref<string | null>(null)
-const federationRole = ref<'standalone' | 'leader' | 'follower'>('standalone')
-const backupToFollower = ref(false)
+const isDirector = ref(true)
+const directorId = ref('')
+const storageId = ref('')
+const pairedPeers = ref<BackendInfo[]>([])
+const rolesBusy = ref(false)
+const pairingUri = ref('')
 const pendingTransfers = ref(0)
 const discoveryDetail = ref('')
 const pingResults = ref<BackendPingResult[]>([])
@@ -40,8 +44,13 @@ async function refresh() {
     const config = await getFederationConfig()
     lastSyncAt.value = config.last_sync_at
     syncError.value = config.last_error
-    federationRole.value = config.role
-    backupToFollower.value = config.backup_to_follower
+    isDirector.value = config.is_director
+    emit('director-changed', config.is_director)
+    pairedPeers.value = config.peers
+    if (!rolesBusy.value) {
+      directorId.value = config.director_backend_id
+      storageId.value = config.storage_backend_id
+    }
     pendingTransfers.value = (await getFederationTransfers()).pending_count
     error.value = ''
   } catch (reason) {
@@ -65,6 +74,7 @@ async function createOffer() {
   try {
     const offer = await createPairingOffer()
     pairingCode.value = offer.pairing_code
+    pairingUri.value = offer.pairing_uri
     pairingMessage.value = 'Kód platí 5 minut a lze jej použít jen jednou.'
     await refresh()
   } catch (reason) {
@@ -92,12 +102,16 @@ async function toggleTransfer() {
   }
 }
 
-async function toggleBackup() {
+async function saveRoles() {
+  rolesBusy.value = true
   try {
-    const result = await setFederationBackup(!backupToFollower.value)
-    backupToFollower.value = result.backup_to_follower
+    await setFederationRoles(directorId.value, storageId.value)
+    rolesBusy.value = false
+    await refresh()
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : 'Nastavení zálohy nelze uložit.'
+    error.value = reason instanceof Error ? reason.message : 'Role nelze předat.'
+  } finally {
+    rolesBusy.value = false
   }
 }
 
@@ -110,7 +124,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
 
 <template>
   <div class="backend-peers">
-    <div><strong>Backend: {{ own?.name ?? 'načítám…' }}</strong><small v-if="own">{{ own.url }}</small><small v-if="federationEnabled">Federace {{ federationRole }} · páteřní přenos {{ transferEnabled ? 'povolený' : 'odložený' }} · ve frontě {{ pendingTransfers }}</small><small v-else>Jen discovery · federace není nakonfigurovaná</small><small v-if="lastSyncAt">Poslední synchronizace: {{ new Date(lastSyncAt).toLocaleTimeString() }}</small><small v-if="syncError" class="sync-error">Synchronizace selhala: {{ syncError }}</small></div>
+    <div><strong>Backend: {{ own?.name ?? 'načítám…' }}</strong><small v-if="own">{{ own.url }}</small><small v-if="federationEnabled">Rovnocenný uzel · {{ isDirector ? 'director' : 'řízení na jiném uzlu' }} · páteřní přenos {{ transferEnabled ? 'povolený' : 'odložený' }} · ve frontě {{ pendingTransfers }}</small><small v-else>Jen discovery · federace není nakonfigurovaná</small><small v-if="lastSyncAt">Poslední synchronizace: {{ new Date(lastSyncAt).toLocaleTimeString() }}</small><small v-if="syncError" class="sync-error">Synchronizace selhala: {{ syncError }}</small></div>
     <span v-if="error" class="muted">{{ error }}</span>
     <span v-else-if="!peers.length" class="muted">{{ discoveryDetail || 'Další pult nenalezen' }}</span>
     <button class="small secondary" :disabled="pingBusy" @click="runApplicationPing">{{ pingBusy ? 'Testuji…' : 'Aplikační ping' }}</button>
@@ -126,10 +140,25 @@ onBeforeUnmount(() => window.clearInterval(timer))
       <div class="pairing-actions">
         <button class="small" @click="createOffer">Vytvořit krátký kód</button>
         <button v-if="federationEnabled" class="small secondary" @click="toggleTransfer">{{ transferEnabled ? 'Odložit páteřní přenosy' : `Spustit odložené přenosy (${pendingTransfers})` }}</button>
-        <button v-if="federationRole === 'leader'" class="small secondary" @click="toggleBackup">{{ backupToFollower ? 'Vypnout zálohu na follower' : 'Zapnout zálohu na follower' }}</button>
+
       </div>
       <p v-if="pairingCode" class="pairing-code"><small>Párovací kód</small><strong>{{ pairingCode.slice(0, 5) }}-{{ pairingCode.slice(5) }}</strong></p>
-      <label>Krátký párovací kód <input v-model="pairingInput" maxlength="11" placeholder="ABCDE-FG234"></label>
+      <label v-if="pairingUri">Párovací odkaz pro připojení bez discovery<input :value="pairingUri" readonly /></label>
+      <label>Párovací kód nebo odkaz <input v-model="pairingInput" placeholder="ABCDE-FG234 nebo multicam://…"></label>
+      <template v-if="federationEnabled && own">
+        <label>Director · řídí relaci a nahrávání
+          <select v-model="directorId" @change="rolesBusy = true">
+            <option v-for="node in [own, ...pairedPeers]" :key="node.backend_id" :value="node.backend_id">{{ node.name }}</option>
+          </select>
+        </label>
+        <label>Storage · finální uložení dat
+          <select v-model="storageId" @change="rolesBusy = true">
+            <option v-for="node in [own, ...pairedPeers]" :key="node.backend_id" :value="node.backend_id">{{ node.name }}</option>
+          </select>
+        </label>
+        <button class="small" @click="saveRoles">Nastavit role backendů</button>
+        <small>Předání potvrzuje aktuální director. Během nahrávání nelze role měnit.</small>
+      </template>
       <button class="small" :disabled="!pairingInput.trim()" @click="joinOffer()">Spárovat s prvním pultem</button>
       <small v-if="pairingMessage">{{ pairingMessage }}</small>
     </details>

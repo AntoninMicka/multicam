@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
+from .storage_guard import check_storage
+
 from .models import Device, DeviceRegistration, DeviceRole, DeviceState, Session, SessionCreate, SessionState, utc_now
 
 
@@ -24,12 +26,17 @@ class SessionStore:
         self.active_backend_id: str | None = None
         self._load()
         self._load_active()
+        for session in self._sessions.values():
+            if session.session_id != self.active_session_id and session.state != SessionState.CLOSED:
+                session.state = SessionState.CLOSED
+                session.closed_at = utc_now()
+                self._persist(session)
 
     def _load_active(self) -> None:
         try:
             data = json.loads((self.root / ".active-session.json").read_text(encoding="utf-8"))
-            session_id = UUID(data["session_id"])
-            if session_id in self._sessions:
+            session_id = UUID(data["session_id"]) if data.get("session_id") else None
+            if session_id is None or (session_id in self._sessions and self._sessions[session_id].state != SessionState.CLOSED):
                 self.active_session_id = session_id
                 self.active_changed_at = datetime.fromisoformat(data["changed_at"])
                 self.active_backend_id = data.get("backend_id")
@@ -37,13 +44,14 @@ class SessionStore:
             pass
 
     def _persist_active(self) -> None:
-        if not self.active_session_id or not self.active_changed_at:
+        check_storage()
+        if not self.active_changed_at:
             return
         self.root.mkdir(parents=True, exist_ok=True)
         path = self.root / ".active-session.json"
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps({
-            "session_id": str(self.active_session_id),
+            "session_id": str(self.active_session_id) if self.active_session_id else None,
             "changed_at": self.active_changed_at.isoformat(),
             "backend_id": self.active_backend_id,
         }), encoding="utf-8")
@@ -105,6 +113,7 @@ class SessionStore:
             self._persist(session)
 
     def _persist(self, session: Session) -> None:
+        check_storage()
         session_dir = self.root / str(session.session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
         path = session_dir / "session.json"
@@ -115,6 +124,8 @@ class SessionStore:
     async def create(self, data: SessionCreate) -> Session:
         session = Session(name=data.name)
         async with self._lock:
+            if self.active_session_id is not None:
+                raise ValueError("Nejprve ukončete aktuální relaci")
             self._sessions[session.session_id] = session
             self._persist(session)
             self.active_session_id = session.session_id
@@ -144,6 +155,15 @@ class SessionStore:
             session = self._sessions.get(session_id)
             if session is None:
                 raise SessionNotFoundError(session_id)
+            if session.state == SessionState.CLOSED:
+                raise ValueError("Ukončená relace nepřijímá další kamery")
+            if data.role in {DeviceRole.MAIN_CAMERA, DeviceRole.TOP_CAMERA}:
+                occupied = next((d for d in session.devices.values() if d.role == data.role and d.device_id != data.device_id), None)
+                if occupied:
+                    raise ValueError(f"Tuto roli už používá {occupied.name}")
+            existing = session.devices.get(str(data.device_id))
+            if existing and existing.owner_backend_id not in {None, owner_backend_id}:
+                raise ValueError("Zařízení patří jinému backendu")
             device = Device(
                 device_id=data.device_id or uuid4(),
                 name=data.name,
@@ -171,13 +191,24 @@ class SessionStore:
                 self._sessions[session.session_id] = session
             for key, device in remote.devices.items():
                 owner = device.owner_backend_id or remote_backend_id
-                if owner == remote_backend_id:
+                if owner == remote_backend_id or (authoritative and owner != local_backend_id):
+                    existing = session.devices.get(key)
+                    if existing and existing.last_seen_at > device.last_seen_at:
+                        continue
                     device.owner_backend_id = owner
                     session.devices[key] = device.model_copy(deep=True)
-            # A remote snapshot must never overwrite local state.
-            if authoritative:
+            # Control revisions prevent an older poll from undoing a live command.
+            if authoritative and remote.state_revision >= session.state_revision:
                 session.name = remote.name
-                session.state = remote.state
+                if session.state != SessionState.CLOSED:
+                    session.state = remote.state
+                    session.closed_at = remote.closed_at
+                    session.state_revision = remote.state_revision
+                    session.last_control = remote.last_control
+                if session.state == SessionState.CLOSED and self.active_session_id == session.session_id:
+                    self.active_session_id = None
+                    self.active_changed_at = remote.closed_at or utc_now()
+                    self._persist_active()
             self._persist(session)
             return session.model_copy(deep=True)
 
@@ -210,8 +241,8 @@ class SessionStore:
             if not self._sessions:
                 raise SessionNotFoundError("current")
             session = self._sessions.get(self.active_session_id) if self.active_session_id else None
-            if session is None:
-                session = max(self._sessions.values(), key=lambda item: item.created_at)
+            if session is None or session.state == SessionState.CLOSED:
+                raise SessionNotFoundError("current")
             return session.model_copy(deep=True)
 
     async def activate(
@@ -222,6 +253,10 @@ class SessionStore:
             session = self._sessions.get(session_id)
             if session is None:
                 raise SessionNotFoundError(session_id)
+            if session.state == SessionState.CLOSED:
+                raise ValueError("Ukončenou relaci nelze znovu aktivovat")
+            if self.active_session_id and self.active_session_id != session_id:
+                raise ValueError("Nejprve ukončete aktuální relaci")
             candidate = changed_at or utc_now()
             if not force and self.active_changed_at and changed_at and candidate <= self.active_changed_at:
                 current = self._sessions.get(self.active_session_id)
@@ -233,20 +268,49 @@ class SessionStore:
             return session.model_copy(deep=True)
 
     def active_state(self) -> dict | None:
-        if not self.active_session_id or not self.active_changed_at:
+        if not self.active_changed_at:
             return None
         return {
-            "session_id": str(self.active_session_id),
+            "session_id": str(self.active_session_id) if self.active_session_id else None,
             "changed_at": self.active_changed_at.isoformat(),
             "backend_id": self.active_backend_id,
         }
 
-    async def set_state(self, session_id: UUID, state: SessionState) -> Session:
+    async def clear_active(self, changed_at: datetime, backend_id: str) -> None:
+        async with self._lock:
+            # The director may have closed and locally deleted a session while
+            # this peer was offline. Its explicit empty current state is final.
+            if self.active_session_id:
+                session = self._sessions.get(self.active_session_id)
+                if session:
+                    session.state = SessionState.CLOSED
+                    session.state_revision += 1
+                    session.last_control = None
+                    session.closed_at = session.closed_at or changed_at
+                    self._persist(session)
+            self.active_session_id = None
+            self.active_changed_at = changed_at
+            self.active_backend_id = backend_id
+            self._persist_active()
+
+    async def set_state(self, session_id: UUID, state: SessionState, *, revision: int | None = None, control: dict | None = None) -> Session:
         async with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
                 raise SessionNotFoundError(session_id)
+            if session.state == SessionState.CLOSED and state != SessionState.CLOSED:
+                raise ValueError("Ukončenou relaci nelze znovu otevřít")
+            if state == SessionState.CLOSED:
+                if session.state == SessionState.RECORDING:
+                    raise ValueError("Nejprve zastavte nahrávání")
+                session.closed_at = session.closed_at or utc_now()
+                if self.active_session_id == session_id:
+                    self.active_session_id = None
+                    self.active_changed_at = session.closed_at
+                    self._persist_active()
             session.state = state
+            session.state_revision = revision if revision is not None else session.state_revision + 1
+            session.last_control = control
             self._persist(session)
             return session.model_copy(deep=True)
 
@@ -255,8 +319,8 @@ class SessionStore:
             session = self._sessions.get(session_id)
             if session is None:
                 raise SessionNotFoundError(session_id)
-            if session.state == SessionState.RECORDING:
-                raise ValueError("A recording session cannot be deleted")
+            if session.state != SessionState.CLOSED:
+                raise ValueError("Smazat lze pouze ukončenou relaci")
             session_dir = self.root / str(session_id)
             self._sessions.pop(session_id)
             if self.active_session_id == session_id:

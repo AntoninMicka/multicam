@@ -12,10 +12,14 @@
 7. **Discovery backendů** – periodický UDP heartbeat na `239.255.77.77:47777`;
    funguje v LAN i nad virtuálním rozhraním ZeroTier. Jde pouze o nalezení pultů,
    relace a úložiště zůstávají vlastnictvím konkrétního backendu.
-8. **Federace pultů** – leader je autoritou pro relace, aktivní relaci, globálně
-   unikátní hlavní/top-down roli a řídicí povely. Follower replikuje lokálně
-   ověřené záznamy leaderu přes trvalou retry frontu. Opačný směr je volitelná
-   záloha; živé náhledy zůstávají lokální.
+8. **Federace pultů** – rovnocenné uzly s předatelnou rolí director (aktuální
+   relace a povely) a nezávislou rolí storage (ověřené finální originály).
+   Každý capture backend posílá data na storage přes trvalou retry frontu.
+   Uzavření relace je nevratné; historie a její mazání jsou lokální. Předání
+   directora vyžaduje dostupného dosavadního directora a zastavené nahrávání.
+9. **Omnia** – Debian LXC a data na SSD, povinný mount a identifikátor disku,
+   kontrola zápisu před startem a za běhu, proudový příjem/odesílání ZIPů.
+   Výchozí profil ukládá originály bez náročného překódování.
 
 ## Datový tok
 

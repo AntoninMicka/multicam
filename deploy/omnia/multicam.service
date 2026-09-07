@@ -1,0 +1,26 @@
+[Unit]
+Description=MultiCam backend on SSD
+After=network-online.target
+Wants=network-online.target
+ConditionPathIsMountPoint=/srv/multicam-ssd
+
+[Service]
+Type=simple
+User=multicam
+Group=multicam
+WorkingDirectory=/srv/multicam-ssd/app
+EnvironmentFile=/etc/multicam.env
+ExecStartPre=/usr/bin/python3 -m backend.app.storage_guard
+ExecStart=/bin/sh /srv/multicam-ssd/app/deploy/omnia/start.sh
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/multicam-ssd
+
+[Install]
+WantedBy=multi-user.target

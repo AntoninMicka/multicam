@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+from .storage_guard import check_storage
+
 from .models import CaptureMedia, Session, UploadCreate, UploadReceipt, UploadStatus
 from .clap import detect_flash
 
@@ -35,6 +37,7 @@ class UploadService:
         self._conversion_lock = threading.Lock()
 
     def _device_dir(self, session_id: UUID, device_id: UUID) -> Path:
+        check_storage()
         return self.root / str(session_id) / "devices" / str(device_id)
 
     def _upload_dir(self, session_id: UUID, device_id: UUID, upload_id: UUID) -> Path:
@@ -289,6 +292,9 @@ class UploadService:
                 logging.getLogger(__name__).exception("Nelze převést starší záznam: %s", metadata_path)
 
     def _normalize_recording(self, source: Path) -> Path:
+        check_storage()
+        if os.getenv("MULTICAM_TRANSCODE", "1") == "0":
+            return source
         if source.suffix.lower() not in {".mp4", ".mov"}:
             return source
         output = self._normalized_path(source)

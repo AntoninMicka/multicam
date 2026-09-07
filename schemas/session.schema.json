@@ -4,39 +4,156 @@
   "title": "MultiCam session manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "session_id", "name", "state", "created_at", "devices"],
+  "required": [
+    "schema_version",
+    "session_id",
+    "name",
+    "state",
+    "created_at",
+    "devices"
+  ],
   "properties": {
-    "schema_version": { "const": "1.0" },
-    "session_id": { "type": "string", "format": "uuid" },
-    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
-    "state": { "enum": ["created", "armed", "recording", "stopped"] },
-    "created_at": { "type": "string", "format": "date-time" },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "session_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "state": {
+      "enum": [
+        "created",
+        "armed",
+        "recording",
+        "stopped",
+        "closed"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
     "devices": {
       "type": "object",
-      "additionalProperties": { "$ref": "#/$defs/device" }
+      "additionalProperties": {
+        "$ref": "#/$defs/device"
+      }
+    },
+    "closed_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "state_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "last_control": {
+      "type": [
+        "object",
+        "null"
+      ]
     }
   },
   "$defs": {
     "device": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["device_id", "name", "role", "state", "capabilities", "connected", "last_seen_at"],
+      "required": [
+        "device_id",
+        "name",
+        "role",
+        "state",
+        "capabilities",
+        "connected",
+        "last_seen_at"
+      ],
       "properties": {
-        "device_id": { "type": "string", "format": "uuid" },
-        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
-        "role": { "enum": ["main_camera", "top_camera", "secondary_camera"] },
-        "state": { "enum": ["disconnected", "ready", "recording", "stored", "uploading", "verified"] },
-        "connected": { "type": "boolean" },
-        "last_seen_at": { "type": "string", "format": "date-time" },
+        "device_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "role": {
+          "enum": [
+            "main_camera",
+            "top_camera",
+            "secondary_camera"
+          ]
+        },
+        "state": {
+          "enum": [
+            "disconnected",
+            "ready",
+            "armed",
+            "recording",
+            "stored",
+            "uploading",
+            "verified"
+          ]
+        },
+        "connected": {
+          "type": "boolean"
+        },
+        "last_seen_at": {
+          "type": "string",
+          "format": "date-time"
+        },
         "capabilities": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "battery_percent": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
-            "free_storage_bytes": { "type": ["integer", "null"], "minimum": 0 },
-            "camera_permission": { "type": ["boolean", "null"] },
-            "microphone_permission": { "type": ["boolean", "null"] }
+            "battery_percent": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 100
+            },
+            "free_storage_bytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "camera_permission": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "microphone_permission": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
           }
+        },
+        "owner_backend_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "owner_backend_name": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     }

@@ -21,7 +21,8 @@ export interface Session {
   schema_version: string
   session_id: string
   name: string
-  state: 'created' | 'armed' | 'recording' | 'stopped'
+  state: 'created' | 'armed' | 'recording' | 'stopped' | 'closed'
   created_at: string
+  closed_at: string | null
   devices: Record<string, Device>
 }

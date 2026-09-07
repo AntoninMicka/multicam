@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.main import app, deleted_session_ids, upload_leases
 from app.federation import federation
+from app.discovery import discovery
 from app.models import SessionState
 from app.store import SessionStore, store
 from app.uploads import UploadService, uploads
@@ -32,11 +33,12 @@ def isolated_storage(tmp_path) -> None:
     federation.token = ""
     federation.transfer_enabled = True
     federation.tls_verify = True
-    federation.role = "standalone"
-    federation.leader_url = None
-    federation.leader_backend_id = None
-    federation.backup_to_follower = False
-    federation.followers = {}
+    federation.director_backend_id = discovery.backend_id
+    federation.storage_backend_id = discovery.backend_id
+    federation.peers = {}
+    federation.assignment_revision = 0
+    from app.main import applied_controls
+    applied_controls.clear()
     deleted_session_ids.clear()
     upload_leases.clear()
 
@@ -84,6 +86,7 @@ def test_federation_control_requires_token_and_applies_immediately(monkeypatch) 
     session = asyncio.run(request("POST", "/api/sessions", json={"name": "Federated"})).json()
     payload = {
         "session_id": session["session_id"],
+        "director_backend_id": discovery.backend_id,
         "message": {"type": "control.arm", "payload": {"command_id": "cmd-1"}},
     }
     assert asyncio.run(request("POST", "/api/federation/control", json=payload)).status_code == 401
@@ -100,7 +103,7 @@ def test_pairing_offer_is_one_time_and_persists_config(monkeypatch) -> None:
     monkeypatch.setattr(federation, "token", "")
     offer = asyncio.run(request("POST", "/api/federation/pair/offer"))
     assert offer.status_code == 200
-    assert federation.role == "leader"
+    assert federation.is_director
     assert len(offer.json()["pairing_code"]) == 10
     assert offer.json()["pairing_code"].isalnum()
     from urllib.parse import parse_qs, urlparse
@@ -112,7 +115,7 @@ def test_pairing_offer_is_one_time_and_persists_config(monkeypatch) -> None:
     }))
     assert len(accepted.json()["token"]) >= 32
     assert federation.tls_verify is False
-    assert federation.followers[peer_id] == "https://10.10.0.2:8000"
+    assert federation.peers[peer_id] == "https://10.10.0.2:8000"
     assert federation.config_path.is_file()
     assert asyncio.run(request("POST", "/api/federation/pair/accept", json={
         "code": code, "peer_backend_id": peer_id, "peer_url": "https://10.10.0.2:8000",
@@ -133,11 +136,10 @@ def test_invalid_peer_does_not_consume_pairing_offer(monkeypatch) -> None:
     assert accepted.status_code == 200
 
 
-def test_leader_targets_only_paired_followers(monkeypatch) -> None:
+def test_peer_targets_only_paired_members(monkeypatch) -> None:
     paired_id = "11111111-1111-4111-8111-111111111111"
     stranger_id = "22222222-2222-4222-8222-222222222222"
-    monkeypatch.setattr(federation, "role", "leader")
-    monkeypatch.setattr(federation, "followers", {paired_id: "https://stored-paired:8000"})
+    monkeypatch.setattr(federation, "peers", {paired_id: "https://stored-paired:8000"})
     monkeypatch.setattr("app.federation.discovery.snapshot", lambda: [
         {"backend_id": paired_id, "url": "https://live-paired:8000", "name": "paired"},
         {"backend_id": stranger_id, "url": "https://stranger:8000", "name": "stranger"},
@@ -147,12 +149,12 @@ def test_leader_targets_only_paired_followers(monkeypatch) -> None:
     }]
 
 
-def test_follower_prefers_live_discovery_url_for_leader(monkeypatch) -> None:
+def test_peer_prefers_live_discovery_url_for_director(monkeypatch) -> None:
     leader_id = "11111111-1111-4111-8111-111111111111"
     monkeypatch.setattr(federation, "token", "x" * 32)
-    monkeypatch.setattr(federation, "role", "follower")
-    monkeypatch.setattr(federation, "leader_backend_id", leader_id)
-    monkeypatch.setattr(federation, "leader_url", "https://stale-hostname:8000")
+    monkeypatch.setattr(federation, "director_backend_id", "11111111-1111-4111-8111-111111111111")
+    monkeypatch.setattr(federation, "director_backend_id", leader_id)
+    monkeypatch.setattr(federation, "peers", {leader_id: "https://stale-hostname:8000"})
     monkeypatch.setattr("app.federation.discovery.snapshot", lambda: [{
         "backend_id": leader_id, "url": "https://10.10.0.1:8000", "name": "leader",
     }])
@@ -162,7 +164,7 @@ def test_follower_prefers_live_discovery_url_for_leader(monkeypatch) -> None:
         called["url"] = peer_url
 
     monkeypatch.setattr(federation, "post_json", fake_post)
-    asyncio.run(federation.send_to_leader("/test", {}))
+    asyncio.run(federation.send_to_director("/test", {}))
     assert called["url"] == "https://10.10.0.1:8000"
 
 
@@ -204,10 +206,10 @@ def test_unknown_session_is_404() -> None:
     assert response.status_code == 404
 
 
-def test_follower_cannot_create_or_activate_session(monkeypatch) -> None:
+def test_non_director_cannot_create_or_activate_session(monkeypatch) -> None:
     first = asyncio.run(request("POST", "/api/sessions", json={"name": "Leader session"})).json()
     monkeypatch.setattr(federation, "token", "x" * 32)
-    monkeypatch.setattr(federation, "role", "follower")
+    monkeypatch.setattr(federation, "director_backend_id", "11111111-1111-4111-8111-111111111111")
     refused = asyncio.run(request("POST", "/api/sessions", json={"name": "Follower session"}))
     assert refused.status_code == 409
     refused = asyncio.run(request("POST", f"/api/sessions/{first['session_id']}/activate"))
@@ -216,14 +218,15 @@ def test_follower_cannot_create_or_activate_session(monkeypatch) -> None:
 
 def test_deferred_federation_transfer_reports_queue_state(monkeypatch) -> None:
     monkeypatch.setattr(federation, "token", "x" * 32)
-    monkeypatch.setattr(federation, "role", "follower")
+    monkeypatch.setattr(federation, "director_backend_id", "11111111-1111-4111-8111-111111111111")
     monkeypatch.setattr(federation, "transfer_enabled", False)
-    monkeypatch.setattr(federation, "leader_backend_id", "11111111-1111-4111-8111-111111111111")
-    monkeypatch.setattr(federation, "leader_url", "https://10.10.0.1:8000")
+    monkeypatch.setattr(federation, "director_backend_id", "11111111-1111-4111-8111-111111111111")
+    monkeypatch.setattr(federation, "peers", {federation.director_backend_id: "https://10.10.0.1:8000"})
+    monkeypatch.setattr(federation, "storage_backend_id", federation.director_backend_id)
     response = asyncio.run(request("GET", "/api/federation/transfers"))
     assert response.status_code == 200
     assert response.json()["deferred"] is True
-    assert response.json()["direction"] == "follower_to_leader"
+    assert response.json()["direction"] == "to_storage"
 
 
 def test_upload_is_locked_during_recording() -> None:
@@ -246,6 +249,7 @@ def test_upload_is_locked_during_recording() -> None:
 def test_session_can_be_deleted_but_not_while_recording(monkeypatch) -> None:
     monkeypatch.setattr(federation, "token", "")
     session = asyncio.run(request("POST", "/api/sessions", json={"name": "Ke smazání"})).json()
+    assert asyncio.run(request("POST", f"/api/sessions/{session['session_id']}/close")).status_code == 200
     deleted = asyncio.run(request("DELETE", f"/api/sessions/{session['session_id']}"))
     assert deleted.status_code == 200
     assert asyncio.run(request("GET", f"/api/sessions/{session['session_id']}" )).status_code == 404
@@ -356,8 +360,8 @@ def test_chunked_upload_is_idempotent_and_verified(tmp_path, monkeypatch) -> Non
     assert media[0]["take_id"] is not None
     assert media[0]["available_locally"] is True
     monkeypatch.setattr(federation, "token", "x" * 32)
-    monkeypatch.setattr(federation, "role", "follower")
-    monkeypatch.setattr(federation, "leader_url", None)
+    monkeypatch.setattr(federation, "director_backend_id", "11111111-1111-4111-8111-111111111111")
+    monkeypatch.setattr(federation, "peers", {})
     follower_media = asyncio.run(request("GET", f"/api/sessions/{session['session_id']}/media")).json()
     assert follower_media[0]["capture_id"] == receipt["capture_id"]
     assert follower_media[0]["available_locally"] is True
@@ -384,3 +388,120 @@ def test_chunked_upload_is_idempotent_and_verified(tmp_path, monkeypatch) -> Non
     assert asyncio.run(request("GET", f"/api/sessions/{session['session_id']}/media")).json() == []
     assert not (uploads.root / receipt["file_path"]).exists()
     assert not (uploads.root / telemetry_receipt["file_path"]).exists()
+
+
+def test_closed_session_is_terminal_and_delete_is_local(monkeypatch):
+    from app.main import merge_federation_snapshot
+    session = asyncio.run(request('POST', '/api/sessions', json={'name': 'Final'})).json()
+    session_id = session['session_id']
+    assert asyncio.run(request('POST', '/api/sessions', json={'name': 'Other'})).status_code == 409
+    assert asyncio.run(request('POST', f'/api/sessions/{session_id}/close')).status_code == 200
+    assert asyncio.run(request('GET', '/api/sessions/current')).status_code == 404
+    assert asyncio.run(request('POST', f'/api/sessions/{session_id}/activate')).status_code == 409
+    assert asyncio.run(request('POST', f'/api/sessions/{session_id}/devices', json={'name': 'Late', 'role': 'secondary_camera'})).status_code == 409
+    restored = SessionStore(uploads.root)
+    with pytest.raises(Exception, match='current'):
+        asyncio.run(restored.current())
+    peer_id = '11111111-1111-4111-8111-111111111111'
+    monkeypatch.setattr(federation, 'token', 'x' * 32)
+    monkeypatch.setattr(federation, 'director_backend_id', peer_id)
+    monkeypatch.setattr(federation, 'peers', {peer_id: 'https://peer'})
+    calls = []
+    async def broadcast(*args):
+        calls.append(args)
+    monkeypatch.setattr(federation, 'broadcast_json', broadcast)
+    assert asyncio.run(request('DELETE', f'/api/sessions/{session_id}')).status_code == 200
+    assert calls == []
+    # A stale director still advertising the historical session cannot restore it.
+    asyncio.run(merge_federation_snapshot({
+        'backend_id': peer_id, 'sessions': [session], 'active_session': None,
+        **federation.assignments(),
+    }, {'backend_id': peer_id}))
+    assert asyncio.run(request('GET', f'/api/sessions/{session_id}')).status_code == 404
+    assert asyncio.run(request('POST', '/api/federation/delete-session', json={'session_id': session_id},
+                               headers={'X-MultiCam-Federation': 'x' * 32})).status_code == 410
+
+
+def test_role_handover_prepares_new_director_and_keeps_storage_independent(monkeypatch):
+    from app.main import assign_backend_roles
+    peer_id = '11111111-1111-4111-8111-111111111111'
+    monkeypatch.setattr(federation, 'token', 'x' * 32)
+    monkeypatch.setattr(federation, 'peers', {peer_id: 'https://peer'})
+    calls = []
+    async def post(url, path, payload):
+        calls.append((path, payload))
+    monkeypatch.setattr(federation, 'post_json', post)
+    asyncio.run(assign_backend_roles({'director_backend_id': peer_id, 'storage_backend_id': discovery.backend_id}))
+    assert not federation.is_director
+    assert federation.is_storage
+    assert [path for path, _ in calls] == ['/api/federation/prepare-director', '/api/federation/assignments']
+    assert federation.assignment_revision == 1
+    saved = json.loads(federation.config_path.read_text())
+    assert saved['director_backend_id'] == peer_id
+    assert saved['storage_backend_id'] == discovery.backend_id
+    federation.adopt_assignments({'assignment_revision': 0, 'director_backend_id': discovery.backend_id,
+                                 'storage_backend_id': peer_id})
+    assert not federation.is_director
+
+
+def test_handover_refused_during_recording_and_when_target_offline(monkeypatch):
+    from app.main import assign_backend_roles
+    from fastapi import HTTPException
+    peer_id = '11111111-1111-4111-8111-111111111111'
+    monkeypatch.setattr(federation, 'token', 'x' * 32)
+    monkeypatch.setattr(federation, 'peers', {peer_id: 'https://peer'})
+    session = asyncio.run(request('POST', '/api/sessions', json={'name': 'Busy'})).json()
+    asyncio.run(store.set_state(UUID(session['session_id']), SessionState.RECORDING))
+    with pytest.raises(HTTPException):
+        asyncio.run(assign_backend_roles({'director_backend_id': peer_id}))
+    assert federation.is_director
+    asyncio.run(store.set_state(UUID(session['session_id']), SessionState.STOPPED))
+    async def offline(*args):
+        raise OSError('offline')
+    monkeypatch.setattr(federation, 'post_json', offline)
+    with pytest.raises(OSError):
+        asyncio.run(assign_backend_roles({'director_backend_id': peer_id}))
+    assert federation.is_director
+    assert federation.assignment_revision == 0
+
+
+def test_storage_target_works_without_discovery(monkeypatch):
+    storage_id = '11111111-1111-4111-8111-111111111111'
+    other_id = '22222222-2222-4222-8222-222222222222'
+    monkeypatch.setattr(federation, 'storage_backend_id', storage_id)
+    monkeypatch.setattr(federation, 'peers', {storage_id: 'https://ssd', other_id: 'https://camera'})
+    monkeypatch.setattr(discovery, 'snapshot', lambda: [])
+    assert [peer['backend_id'] for peer in federation.direct_transfer_peers()] == [storage_id]
+
+
+def test_stale_snapshot_cannot_undo_control_or_closure(tmp_path):
+    from app.models import SessionCreate
+    local = SessionStore(tmp_path / 'isolated')
+    session = asyncio.run(local.create(SessionCreate(name='Current')))
+    stale = session.model_copy(deep=True)
+    asyncio.run(local.set_state(session.session_id, SessionState.ARMED))
+    merged = asyncio.run(local.merge_remote(stale, 'director', 'local', authoritative=True))
+    assert merged.state == SessionState.ARMED
+    asyncio.run(local.set_state(session.session_id, SessionState.CLOSED))
+    stale.state_revision = 100
+    merged = asyncio.run(local.merge_remote(stale, 'director', 'local', authoritative=True))
+    assert merged.state == SessionState.CLOSED
+
+
+def test_snapshot_replays_missed_control_once(monkeypatch):
+    from app.main import merge_federation_snapshot
+    from app.models import Session, SocketMessage
+    peer_id = '11111111-1111-4111-8111-111111111111'
+    monkeypatch.setattr(federation, 'token', 'x' * 32)
+    monkeypatch.setattr(federation, 'director_backend_id', peer_id)
+    monkeypatch.setattr(federation, 'peers', {peer_id: 'https://peer'})
+    remote = Session(name='Remote', state=SessionState.RECORDING, state_revision=2,
+                     last_control=SocketMessage(type='recording.start', payload={'take_id': str(UUID(int=8)), 'state_revision': 2}).model_dump())
+    snapshot = {'backend_id': peer_id, 'sessions': [remote.model_dump(mode='json')],
+                'active_session': {'session_id': str(remote.session_id), 'changed_at': remote.created_at.isoformat()},
+                **federation.assignments()}
+    asyncio.run(merge_federation_snapshot(snapshot, {'backend_id': peer_id}))
+    asyncio.run(merge_federation_snapshot(snapshot, {'backend_id': peer_id}))
+    events = (uploads.root / str(remote.session_id) / 'events.jsonl').read_text().splitlines()
+    assert len(events) == 1
+    assert json.loads(events[0])['take_id'] == str(UUID(int=8))

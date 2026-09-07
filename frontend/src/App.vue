@@ -14,6 +14,7 @@ import {
   registerDevice,
   sessionSocket,
   uploadArtifact,
+  closeSession,
   type CaptureMedia,
   type DeviceCapabilities,
 } from './api'
@@ -86,7 +87,7 @@ const activeCommandType = ref('')
 const operationalWarnings = ref<string[]>([])
 const clockMetrics = ref<Record<string, { offset_ms: number; rtt_ms: number }>>({})
 const livePreviewEnabled = ref(false)
-const federationRole = ref<'standalone' | 'leader' | 'follower'>('standalone')
+const isDirectorBackend = ref(true)
 const previewFrames = ref<Record<string, { data_url: string; captured_at: string }>>({})
 let socket: WebSocket | null = null
 let commandTimeout: number | undefined
@@ -242,11 +243,13 @@ function connectSocket(id: string, cameraId?: string) {
       session.value = null
       sessionMedia.value = []
       availableSessions.value = await listSessions().catch(() => [])
-      error.value = 'Relace byla smazána na propojeném pultu.'
+      error.value = 'Relace byla smazána na tomto backendu.'
       return
     }
+    if (message.type === 'federation.config') isDirectorBackend.value = message.payload.is_director
     if (message.type === 'federation.active_session' && role.value === 'director' && message.payload.session_id !== session.value?.session_id) {
-      await joinFederatedSession(message.payload.session_id)
+      if (message.payload.session_id) await joinFederatedSession(message.payload.session_id)
+      else await backToSessions()
       return
     }
     if (message.type === 'clap.trigger' && role.value !== 'director' && recording.value) {
@@ -332,7 +335,7 @@ async function chooseRole(selectedRole: Role) {
   error.value = ''
   if (selectedRole === 'director') {
     try {
-      federationRole.value = (await getFederationConfig()).role
+      isDirectorBackend.value = (await getFederationConfig()).is_director
       availableSessions.value = await listSessions()
     } catch (reason) {
       error.value = reason instanceof Error ? reason.message : 'Seznam relací nelze načíst.'
@@ -343,7 +346,8 @@ async function chooseRole(selectedRole: Role) {
 }
 
 async function selectSession(selected: Session) {
-  if (federationRole.value !== 'follower') await activateSession(selected.session_id)
+  if (selected.state === 'closed') return
+  if (isDirectorBackend.value) await activateSession(selected.session_id)
   session.value = await getSession(selected.session_id)
   connectSocket(selected.session_id)
   await loadSessionMedia()
@@ -365,8 +369,18 @@ async function joinFederatedSession(sessionId: string) {
   }
 }
 
+async function finishSession() {
+  if (!session.value || !window.confirm('Ukončit relaci? Další nahrávání do ní už nebude možné. Rozpracované přenosy se mohou dokončit.')) return
+  try {
+    await closeSession(session.value.session_id)
+    await backToSessions()
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'Relaci nelze ukončit.'
+  }
+}
+
 async function removeSession(selected: Session) {
-  if (!window.confirm(`Smazat celou relaci „${selected.name}“ včetně záznamů na obou pultech? Tuto operaci nelze vrátit.`)) return
+  if (!window.confirm(`Smazat celou relaci „${selected.name}“ včetně záznamů pouze na tomto backendu? Tuto operaci nelze vrátit.`)) return
   try {
     await deleteSession(selected.session_id)
     availableSessions.value = availableSessions.value.filter((item) => item.session_id !== selected.session_id)
@@ -929,19 +943,19 @@ onBeforeUnmount(() => {
       <button class="back" @click="role = null">← změnit roli</button>
       <template v-if="role === 'director'">
         <HotspotPanel />
-        <BackendPeers @join-session="joinFederatedSession" />
+        <BackendPeers @join-session="joinFederatedSession" @director-changed="isDirectorBackend = $event" />
         <ZeroTierPanel />
         <InterfaceQrPanel />
         <button class="archive-button secondary" @click="archiveOpen = true">Archiv všech záznamů</button>
         <div v-if="availableSessions.length" class="session-list">
           <h2>Relace</h2>
           <div v-for="item in availableSessions" :key="item.session_id" class="session-row">
-            <button class="session-item" @click="selectSession(item)"><span>{{ item.name }}</span><small>{{ new Date(item.created_at).toLocaleString() }} · {{ Object.keys(item.devices).length }} kamer</small></button>
-            <button class="small stop" :disabled="item.state === 'recording' || federationRole === 'follower'" @click="removeSession(item)">Smazat</button>
+            <button class="session-item" :disabled="item.state === 'closed'" @click="selectSession(item)"><span>{{ item.name }}{{ item.state === 'closed' ? ' · ukončená' : '' }}</span><small>{{ new Date(item.created_at).toLocaleString() }} · {{ Object.keys(item.devices).length }} kamer</small></button>
+            <button class="small stop" :disabled="item.state !== 'closed'" @click="removeSession(item)">Smazat</button>
           </div>
         </div>
-        <template v-if="federationRole !== 'follower'"><h2>Nová relace</h2><label>Název <input v-model="sessionName" /></label><button :disabled="busy" @click="startDirector">Založit relaci</button></template>
-        <p v-else class="muted">Aktivní relaci vytváří a přepíná řídicí pult (leader).</p>
+        <template v-if="isDirectorBackend"><h2>Nová relace</h2><label>Název <input v-model="sessionName" /></label><button :disabled="busy || availableSessions.some(item => item.state !== 'closed')" @click="startDirector">Založit relaci</button></template>
+        <p v-else class="muted">Aktuální relaci vytváří a ukončuje director. Jeho roli lze předat v nastavení federace.</p>
       </template>
       <template v-else>
         <h2>Připojit: {{ roleLabel(role) }}</h2>
@@ -967,18 +981,19 @@ onBeforeUnmount(() => {
         <button class="back" @click="backToSessions">← seznam relací</button>
         <button class="archive-button secondary" @click="archiveOpen = true">Archiv všech záznamů</button>
         <HotspotPanel />
-        <BackendPeers @join-session="joinFederatedSession" />
+        <BackendPeers @join-session="joinFederatedSession" @director-changed="isDirectorBackend = $event" />
         <ZeroTierPanel />
         <InterfaceQrPanel />
         <h3>Zařízení ({{ devices.length }})</h3>
         <button class="preview-toggle secondary" :disabled="!connectedDevices.length || session.state === 'recording'" @click="toggleLivePreview">{{ livePreviewEnabled ? 'Vypnout živé náhledy' : 'Zapnout živé náhledy' }}</button>
-        <div class="record-controls">
+        <div v-if="session.state !== 'closed'" class="record-controls">
           <template v-if="session.state !== 'recording'">
-            <button class="secondary" :disabled="federationRole === 'follower' || !connectedDevices.length" @click="sendRecordingCommand('control.arm')">1. ARM · připravit kamery</button>
-            <button :disabled="federationRole === 'follower' || !allCamerasArmed" @click="sendRecordingCommand('recording.start')">2. ● Spustit záznam</button>
+            <button class="secondary" :disabled="!isDirectorBackend || !connectedDevices.length" @click="sendRecordingCommand('control.arm')">1. ARM · připravit kamery</button>
+            <button :disabled="!isDirectorBackend || !allCamerasArmed" @click="sendRecordingCommand('recording.start')">2. ● Spustit záznam</button>
           </template>
-          <button v-else class="stop" :disabled="federationRole === 'follower'" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
+          <button v-else class="stop" :disabled="!isDirectorBackend" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
         </div>
+        <button v-if="isDirectorBackend && session.state !== 'closed'" class="stop" :disabled="session.state === 'recording'" @click="finishSession">Ukončit relaci</button>
         <p v-if="activeCommandType && connectedDevices.length" class="muted">Potvrzení povelu: {{ Object.values(controlAcks).filter(ack => !['pending', 'timeout', 'error'].includes(ack.status)).length }}/{{ connectedDevices.length }}</p>
         <button class="clap-button" :disabled="!devices.some(device => device.role === 'main_camera' && device.connected)" @click="triggerClap">Spustit identifikační klapku</button>
         <p v-if="!devices.length" class="muted">Čekám na připojení prvního telefonu…</p>
@@ -1005,14 +1020,14 @@ onBeforeUnmount(() => {
           </div>
           <div class="camera-controls">
             <div class="ready"><span>✓</span><div><strong>Zařízení je připravené</strong><small>{{ deviceName }} · {{ VIDEO_PROFILES[selectedVideoProfile].label }}</small><small>{{ activeVideoSettings }}</small></div></div>
-            <div v-if="role === 'main_camera'" class="record-controls">
+            <div v-if="role === 'main_camera' && session.state !== 'closed'" class="record-controls">
               <template v-if="session.state !== 'recording'">
                 <button v-if="session.state !== 'armed'" class="secondary" :disabled="!cameraReady" @click="sendRecordingCommand('control.arm')">1. ARM · připravit kamery</button>
                 <button v-else :disabled="!cameraReady || recordingStarting || recordingFinalizing" @click="sendRecordingCommand('recording.start')">2. ● Spustit záznam</button>
               </template>
               <button v-else class="stop" @click="sendRecordingCommand('recording.stop')">■ Zastavit záznam</button>
             </div>
-            <button v-if="role === 'main_camera'" class="clap-button" @click="flashClap">Otestovat světelnou klapku</button>
+            <button v-if="role === 'main_camera' && session.state !== 'closed'" class="clap-button" @click="flashClap">Otestovat světelnou klapku</button>
             <div v-if="uploadProgress !== null" class="upload">
               <div><strong>{{ uploadVerified ? 'Přenos ověřen' : 'Přenáším záznam' }}</strong><span>{{ uploadProgress }} %</span></div>
               <progress :value="uploadProgress" max="100"></progress>

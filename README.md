@@ -139,63 +139,25 @@ použitý jiný firewall než UFW, skript jej ponechá beze změny a pravidla TC
 8000 a UDP 47777 je nutné přidat jeho nativní konfigurací. Nestandardní porty
 skript převezme z `MULTICAM_PORT` a `MULTICAM_DISCOVERY_PORT`.
 
-Se stejnou hodnotou `MULTICAM_FEDERATION_TOKEN` fungují oba backendy jako jeden
-pult: relace a seznam připojených kamer se slučují, `ARM`, `START` a `STOP` se
-předají druhému backendu ihned a oba použijí stejné `take_id`. Telefon vždy
-odesílá video jen svému lokálnímu notebooku. Teprve až tento notebook ověří
-video i telemetrii všech svých telefonů, odešle kontrolovaně zabalenou lokální
-část klapky druhému notebooku. Import kontroluje velikosti a SHA-256 a je
-idempotentní.
+Federace propojuje **rovnocenné backendy** se dvěma nezávisle přidělenými rolemi:
 
-Federace je autoritativní: pult, který vytvoří párovací QR/kód, se stane
-`leader`, připojený pult `follower`. Leader jako jediný vytváří, maže a přepíná
-aktivní relaci; follower tento stav automaticky převezme. Řídicí povely z
-followeru (včetně povelu z hlavní kamery) procházejí přes leader. V celé
-federaci smí být právě jedna hlavní a jedna top-down kamera, nezávisle na tom,
-ke kterému notebooku jsou připojené. Živé náhledy se mezi backendy neposílají a
-zůstávají jen na pultu příslušného telefonu.
-U každé kamery i pořízeného streamu UI zobrazuje název backendu, ke kterému je
-telefon připojený. Follower vždy načítá své lokálně ověřené záznamy přímo z
-vlastního disku a zobrazí je okamžitě, ještě před replikací na leadera.
-Follower při párování a následně při každém reconnectu registruje u leadera
-svou dosažitelnou adresu. Řídicí povely proto nejsou závislé na obousměrném
-multicast discovery přes ZeroTier.
+- **Director** vytváří a ukončuje aktuální relaci a rozesílá ARM/START/STOP. Registrace kamer přes něj atomicky hlídá jedinou hlavní a top-down kameru.
+- **Storage** přijímá finální originály a telemetrii ze všech capture backendů, včetně directora. Jeden backend může mít obě role.
 
-Po ověření lokálních uploadů posílá follower svou část klapky leaderu s trvalým
-retry stavem. Opačný směr je vypnutý, dokud leader v UI nezapne **Zálohu na
-follower**. Potlačení federačních přenosů zastaví oba směry, nikoli řídicí
-povely ani synchronizaci relací.
-Tlačítko **Odložit páteřní přenosy** nezahazuje žádná data: telefon vždy nejprve
-dokončí upload na přímo připojený backend, ověří se video i telemetrie a hotová
-klapka zůstane v trvalé federační frontě. UI ukazuje počet čekajících přenosů.
-Po volbě **Spustit odložené přenosy** retry smyčka frontu automaticky odešle;
-primárně follower → leader, případně sekundárně leader → follower jako zálohu.
-Federační data se nikdy neposílají ve stavu `RECORDING` ani před ověřením všech
-lokálních streamů dané klapky. Pro video se používá pouze peer aktuálně viděný
-přes discovery; uložená adresa leadera slouží řídicímu kanálu, ale sama nestačí
-ke spuštění velkého přenosu. Pokud přímé spojení zmizí nebo se backend vypne,
-chybějící potvrzení zůstane na disku a po restartu a novém discovery spojení se
-klapka znovu zařadí k odeslání.
-Také lokální uploady jsou během `RECORDING` uzamčené. Po `STOP` backend udělí
-časově obnovovaný upload lease vždy jedné lokální kameře; její video a
-telemetrie mohou běžet souběžně, další telefon čeká a využije existující retry.
-Po ověření obou artefaktů se lease uvolní další kameře. Role kamery pořadí ani
-cílový backend nijak nemění.
+V panelu **Spárovat pulty / nastavení federace** lze změnit obě role. Předání directora probíhá přes dosavadního directora mimo nahrávání, po předání aktuálního stavu nástupci. Při nedostupnosti directora se nový automaticky nevolí; připojené kamery mohou dokončit lokální uložení a přenosy. Při prvním párování zůstane výchozím directorem i storage první backend. Další uzly převezmou členství a role. Starší konfigurace leader/follower se při načtení převedou na tento model; upgradujte všechny uzly společně.
 
-U nalezeného pultu se zobrazuje jeho aktivní relace a tlačítko pro připojení
-lokálního pultu. Relace lze odstranit ze seznamu; po potvrzení se smažou její
-manifesty, záznamy a odvozené soubory na obou dostupných federovaných pultech.
-Běžící relaci backend smazat odmítne.
+Všechny uzly udržují aktuální relaci a seznam kamer. Povely obsahují revizi a stejné `take_id`; synchronizace opakuje poslední povel, pokud okamžité doručení selhalo. Předchozí revize nesmí přepsat novější stav. Jednotnou světelnou klapku rozesílá director. Živé náhledy zůstávají lokální.
 
-Token není nutné zadávat ručně. Na prvním notebooku otevřete pult přes lokální
-adresu (`https://localhost:8000`), rozbalte **Spárovat pulty / nastavení
-federace** a zvolte **Vytvořit párovací QR**. Na druhém lokálně otevřeném pultu
-ve stejné sekci QR vyfoťte/načtěte, případně vložte jeho text. Jednorázový kód
-je zobrazený také pod QR ve formátu `XXXXX-XXXXX`; na druhém pultu lze zadat
-jen tento kód a backend automaticky osloví pulty nalezené přes discovery. Kód
-platí pět minut; druhý backend si přes něj převezme token a oba jej uloží do
-`data/federation.json` s oprávněním pouze pro vlastníka. V UI lze také bez
-restartu povolit nebo potlačit následnou replikaci záznamů.
+Telefon nejprve odešle video a telemetrii svému backendu. Hotové dvojice se průběžně posílají na určený storage; později doručená kamera stejné klapky vytvoří další přenos. Import ověřuje velikosti a SHA-256 a potvrzuje až zápis souborů. Chybějící potvrzení se opakuje z trvalé fronty, i po restartu. Originály na capture backendech se automaticky nemažou. ZIP se odesílá proudově a velké přenosy běží odděleně od synchronizace relací. Používají se jen spárovaní členové; uložená unicast adresa funguje i bez discovery. **Odložit páteřní přenosy** pozastaví data, nikoli řízení. Ve stavu RECORDING se nové federační přenosy dané relace nezahajují.
+
+**Zastavit záznam** uzavře jeden záběr; další záběr lze natočit v téže relaci. **Ukončit relaci** ji nevratně uzavře. Nelze ji znovu aktivovat ani připojit další kameru, ale již pořízené záznamy se mohou doposlat. Novou relaci lze založit až po ukončení předchozí. Po restartu se žádná historická relace automaticky nevybere. Starší neaktivní relace přejdou do uzavřeného archivu.
+
+Ukončenou relaci lze **smazat pouze lokálně** na kterémkoli backendu. Mazání se neposílá ostatním a lokální seznam smazaných relací brání jejich obnovení při další synchronizaci či importu. Prohlížení a export historie zůstává v archivu. Předání role storage nepřesouvá ani nemaže původní archiv; nové úložiště dostane dostupné originály z capture backendů.
+
+Párování se nastavuje přes lokální adresu (`https://localhost:8000`). Na jednom pultu zvolte **Vytvořit krátký kód**, na druhém vložte kód nebo celý párovací odkaz. Samotný kód potřebuje discovery; celý odkaz funguje přes unicast. Kód je jednorázový, platí pět minut, token se ukládá do `data/federation.json` jen pro vlastníka. Backend s vlastní aktivní relací musí před připojením k federaci tuto relaci ukončit.
+
+Nasazení na **Turris Omnia podmíněné dostupným SSD** popisuje [deploy/omnia/README.md](deploy/omnia/README.md). Release sestavíte pomocí `./scripts/build-omnia-release.sh`; frontend se na routeru nesestavuje.
+
 Protože každý pult standardně používá vlastní lokální CA, QR handshake současně
 uloží režim TLS pro toto spojení; autentizaci dalších požadavků zajišťuje
 sdílený náhodný token uvnitř privátní ZeroTier sítě. UI zobrazuje čas poslední

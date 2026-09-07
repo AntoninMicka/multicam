@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .storage_guard import check_storage
+
 from .discovery import discovery
 
 
@@ -23,11 +25,16 @@ class Federation:
         except (OSError, ValueError, TypeError):
             saved = {}
         self.token = os.getenv("MULTICAM_FEDERATION_TOKEN", saved.get("token", ""))
-        self.role = os.getenv("MULTICAM_FEDERATION_ROLE", saved.get("role", "standalone"))
-        self.leader_url = os.getenv("MULTICAM_FEDERATION_LEADER_URL", saved.get("leader_url"))
-        self.leader_backend_id = saved.get("leader_backend_id")
-        self.followers: dict[str, str] = saved.get("followers", {}) if isinstance(saved.get("followers", {}), dict) else {}
-        self.backup_to_follower = os.getenv("MULTICAM_FEDERATION_BACKUP", "1" if saved.get("backup_to_follower") else "0") == "1"
+        legacy_role = saved.get("role", "standalone")
+        self.peers: dict[str, str] = dict(saved.get("peers", saved.get("followers", {})))
+        legacy_director = saved.get("leader_backend_id")
+        if legacy_director and saved.get("leader_url") and legacy_director != discovery.backend_id:
+            self.peers[legacy_director] = saved["leader_url"]
+        self.director_backend_id = saved.get("director_backend_id") or (
+            legacy_director if legacy_role == "follower" else discovery.backend_id
+        )
+        self.storage_backend_id = saved.get("storage_backend_id") or self.director_backend_id
+        self.assignment_revision = int(saved.get("assignment_revision", 0))
         configured_transfer = os.getenv("MULTICAM_FEDERATION_TRANSFER")
         self.transfer_enabled = configured_transfer != "0" if configured_transfer is not None else saved.get("transfer_enabled", True)
         configured_verify = os.getenv("MULTICAM_FEDERATION_TLS_VERIFY")
@@ -55,21 +62,18 @@ class Federation:
         return ssl.create_default_context()
 
     def save(self) -> None:
+        check_storage()
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.config_path.with_suffix(".tmp")
         temporary.write_text(json.dumps({
             "token": self.token, "transfer_enabled": self.transfer_enabled, "tls_verify": self.tls_verify,
-            "role": self.role, "leader_url": self.leader_url,
-            "leader_backend_id": self.leader_backend_id,
-            "backup_to_follower": self.backup_to_follower,
-            "followers": self.followers,
+            **self.assignments(), "peers": self.peers,
         }), encoding="utf-8")
         os.chmod(temporary, 0o600)
         os.replace(temporary, self.config_path)
 
     def configure(
         self, *, token: str | None = None, transfer_enabled: bool | None = None,
-        backup_to_follower: bool | None = None,
     ) -> None:
         if token is not None:
             if len(token) < 32:
@@ -77,17 +81,12 @@ class Federation:
             self.token = token
         if transfer_enabled is not None:
             self.transfer_enabled = transfer_enabled
-        if backup_to_follower is not None:
-            self.backup_to_follower = backup_to_follower
         self.save()
 
     def create_pairing_offer(self) -> str:
         import time
         if not self.token:
             self.token = secrets.token_urlsafe(32)
-        self.role = "leader"
-        self.leader_url = discovery.advertised_url()
-        self.leader_backend_id = discovery.backend_id
         self.save()
         # 10 characters from an unambiguous 32-character alphabet = 50 bits.
         alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -121,9 +120,11 @@ class Federation:
                 return json.loads(response.read())
         response = await asyncio.to_thread(exchange)
         self.tls_verify = False
-        self.role = "follower"
-        self.leader_url = response.get("leader_url", url).rstrip("/")
-        self.leader_backend_id = response["leader_backend_id"]
+        self.peers = response["peers"]
+        self.peers.pop(discovery.backend_id, None)
+        self.director_backend_id = response["director_backend_id"]
+        self.storage_backend_id = response["storage_backend_id"]
+        self.assignment_revision = response["assignment_revision"]
         self.configure(token=response["token"])
 
     def mark_sync_ok(self) -> None:
@@ -135,53 +136,66 @@ class Federation:
 
     async def pair_with_discovered_peer(self, code: str) -> None:
         candidates = discovery.peers_with_pairing_code(code) or discovery.snapshot()
-        results = await asyncio.gather(*(
-            self.pair_with(peer["url"], code) for peer in candidates
-        ), return_exceptions=True)
-        if not results or all(isinstance(result, Exception) for result in results):
-            raise ValueError("No discovered backend accepted the pairing code")
+        for peer in candidates:
+            try:
+                await self.pair_with(peer["url"], code)
+                return
+            except (OSError, ValueError):
+                continue
+        raise ValueError("No discovered backend accepted the pairing code")
 
-    def target_peers(self) -> list[dict]:
-        peers = discovery.snapshot()
-        if self.role == "follower" and self.leader_backend_id:
-            matched = [peer for peer in peers if peer["backend_id"] == self.leader_backend_id]
-            if not matched and self.leader_url:
-                return [{"backend_id": self.leader_backend_id, "url": self.leader_url, "name": "leader"}]
-            return matched
-        if self.role == "leader":
-            # Discovery is deliberately unauthenticated.  Never turn every
-            # backend visible on the LAN/ZeroTier network into a federation
-            # target; only explicitly paired followers may receive control
-            # messages, deletion requests, snapshots or media.
-            by_id = {
-                peer["backend_id"]: peer
-                for peer in peers
-                if peer["backend_id"] in self.followers
-            }
-            for backend_id, url in self.followers.items():
-                by_id.setdefault(backend_id, {"backend_id": backend_id, "url": url, "name": "follower"})
-            return list(by_id.values())
-        return peers
+    @property
+    def is_director(self) -> bool:
+        return not self.enabled or self.director_backend_id == discovery.backend_id
 
-    def direct_transfer_peers(self) -> list[dict]:
-        """Peers currently observed by discovery; never use a stale URL for media."""
-        peers = discovery.snapshot()
-        if self.role == "follower":
-            return [peer for peer in peers if peer["backend_id"] == self.leader_backend_id]
-        if self.role == "leader":
-            return [peer for peer in peers if peer["backend_id"] in self.followers]
-        return []
+    @property
+    def is_storage(self) -> bool:
+        return not self.enabled or self.storage_backend_id == discovery.backend_id
 
-    def register_follower(self, backend_id: str, url: str) -> None:
-        if self.role != "leader" or not url.startswith(("http://", "https://")):
-            raise ValueError("Follower registration is not valid on this backend")
-        self.followers[backend_id] = url.rstrip("/")
+    def assignments(self) -> dict:
+        return {"director_backend_id": self.director_backend_id,
+                "storage_backend_id": self.storage_backend_id,
+                "assignment_revision": self.assignment_revision}
+
+    def membership(self) -> dict[str, str]:
+        return {**self.peers, discovery.backend_id: discovery.advertised_url()}
+
+    def register_peer(self, backend_id: str, url: str) -> None:
+        from uuid import UUID
+        backend_id = str(UUID(backend_id))
+        if not url.startswith(("http://", "https://")):
+            raise ValueError("Peer URL must use HTTP or HTTPS")
+        if backend_id != discovery.backend_id and self.peers.get(backend_id) != url.rstrip("/"):
+            self.peers[backend_id] = url.rstrip("/")
+            self.save()
+
+    def adopt_assignments(self, data: dict) -> None:
+        revision = int(data["assignment_revision"])
+        if revision <= self.assignment_revision:
+            return
+        members = self.membership()
+        if data["director_backend_id"] not in members or data["storage_backend_id"] not in members:
+            raise ValueError("Assigned backend must be paired")
+        self.director_backend_id = data["director_backend_id"]
+        self.storage_backend_id = data["storage_backend_id"]
+        self.assignment_revision = revision
         self.save()
 
-    async def announce_to_leader(self) -> None:
-        await self.send_to_leader("/api/federation/register-follower", {
-            "backend_id": discovery.backend_id, "url": discovery.advertised_url(),
-        })
+    def target_peers(self) -> list[dict]:
+        # Discovery may refresh URLs only for explicitly trusted members.
+        live = {peer["backend_id"]: peer for peer in discovery.snapshot()}
+        return [live.get(backend_id, {"backend_id": backend_id, "url": url, "name": backend_id})
+                for backend_id, url in self.peers.items() if backend_id != discovery.backend_id]
+
+    def direct_transfer_peers(self) -> list[dict]:
+        # A configured unicast address works without multicast (e.g. on Omnia).
+        return [peer for peer in self.target_peers() if peer["backend_id"] == self.storage_backend_id]
+
+    async def send_to_director(self, path: str, payload: dict) -> None:
+        peer = next((p for p in self.target_peers() if p["backend_id"] == self.director_backend_id), None)
+        if not self.enabled or not peer:
+            raise ValueError("Director is not available")
+        await self.post_json(peer["url"], path, payload)
 
     def _request(self, url: str, *, data: bytes | None = None, content_type: str = "application/json") -> bytes:
         request = urllib.request.Request(url, data=data, headers={
@@ -213,21 +227,24 @@ class Federation:
         if len(failures) == len(results):
             self.mark_sync_error(failures[0])
 
-    async def send_to_leader(self, path: str, payload: dict) -> None:
-        if not self.enabled or self.role != "follower" or not self.leader_url:
-            raise ValueError("Leader is not configured")
-        live = next((
-            peer["url"] for peer in discovery.snapshot()
-            if peer["backend_id"] == self.leader_backend_id
-        ), None)
-        await self.post_json(live or self.leader_url, path, payload)
-
     async def send_bundle(self, peer_url: str, path: Path, session_id: str, take_id: str) -> None:
         if not self.enabled or not self.transfer_enabled:
             return
         query = f"?session_id={session_id}&take_id={take_id}&source_backend_id={discovery.backend_id}"
-        data = await asyncio.to_thread(path.read_bytes)
-        await asyncio.to_thread(self._request, f"{peer_url}/api/federation/take{query}", data=data, content_type="application/zip")
+        def transfer() -> None:
+            request = urllib.request.Request(
+                f"{peer_url}/api/federation/take{query}",
+                headers={"X-MultiCam-Federation": self.token,
+                         "Content-Type": "application/zip", "Content-Length": str(path.stat().st_size)},
+                method="POST",
+            )
+            with path.open("rb") as source:
+                request.data = source
+                with urllib.request.urlopen(request, timeout=300, context=self._ssl_context()) as response:
+                    result = json.loads(response.read())
+                    if result.get("verified") is not True:
+                        raise ValueError("Storage did not verify the transfer")
+        await asyncio.to_thread(transfer)
 
 
 federation = Federation()

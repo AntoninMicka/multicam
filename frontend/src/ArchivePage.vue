@@ -56,7 +56,7 @@ async function loadArchive(): Promise<void> {
 }
 
 async function removeCapture(capture: ArchiveCapture): Promise<void> {
-  if (!window.confirm(`Nenávratně smazat záběr kamery „${capture.device_name}“ včetně telemetrie?`)) return
+  if (!window.confirm(`Nenávratně smazat záběr kamery „${capture.device_name}“ včetně telemetrie pouze na tomto backendu?`)) return
   deleting.value = true
   try {
     await deleteServerCapture(capture.session_id, capture.device_id, capture.capture_id)
@@ -69,7 +69,7 @@ async function removeCapture(capture: ArchiveCapture): Promise<void> {
 }
 
 async function removeGroup(group: (typeof groups.value)[number]): Promise<void> {
-  if (!window.confirm(`Nenávratně smazat celou klapku (${group.captures.length} záznamů) včetně telemetrie?`)) return
+  if (!window.confirm(`Nenávratně smazat celou klapku (${group.captures.length} záznamů) včetně telemetrie pouze na tomto backendu?`)) return
   deleting.value = true
   try {
     await deleteServerTake(group.sessionId, group.takeId)

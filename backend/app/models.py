@@ -30,6 +30,7 @@ class SessionState(StrEnum):
     ARMED = "armed"
     RECORDING = "recording"
     STOPPED = "stopped"
+    CLOSED = "closed"
 
 
 class DeviceCapabilities(BaseModel):
@@ -68,6 +69,9 @@ class Session(BaseModel):
     name: str
     state: SessionState = SessionState.CREATED
     created_at: datetime = Field(default_factory=utc_now)
+    state_revision: int = 0
+    last_control: dict | None = None
+    closed_at: datetime | None = None
     devices: dict[str, Device] = Field(default_factory=dict)
 
 

@@ -42,7 +42,7 @@ def _included_files(session_dir: Path) -> list[Path]:
         relative = path.relative_to(session_dir)
         if "chunks" in relative.parts and ".uploads" in relative.parts:
             continue
-        if path.name.endswith(".playback.webm") or path.suffix == ".part":
+        if path.name.endswith((".playback.webm", ".normalized.webm")) or path.suffix == ".part":
             continue
         result.append(path)
     return sorted(result)
@@ -178,6 +178,8 @@ def import_session(data_dir: Path, source: Path) -> UUID:
                         output.write(chunk)
                         digest.update(chunk)
                         size += len(chunk)
+                    output.flush()
+                    os.fsync(output.fileno())
                 if size != metadata["size_bytes"] or digest.hexdigest() != metadata["sha256"]:
                     raise BundleError(f"Checksum mismatch: {relative}")
             session = json.loads((staging / "session.json").read_text(encoding="utf-8"))
@@ -228,6 +230,8 @@ def import_take(data_dir: Path, source: Path, expected_session_id: UUID, expecte
                         output.write(chunk)
                         digest.update(chunk)
                         size += len(chunk)
+                    output.flush()
+                    os.fsync(output.fileno())
                 if size != metadata["size_bytes"] or digest.hexdigest() != metadata["sha256"]:
                     raise BundleError(f"Checksum mismatch: {relative}")
                 if relative in ignored:
@@ -236,7 +240,8 @@ def import_take(data_dir: Path, source: Path, expected_session_id: UUID, expecte
                 if target.exists():
                     if target.stat().st_size != size or _sha256(target) != digest.hexdigest():
                         raise BundleError(f"Conflicting replicated file: {relative}")
-            for relative in expected:
+            # Publish receipts only after their immutable artifacts are durable.
+            for relative in sorted(expected, key=lambda name: name.endswith("upload.json")):
                 if relative in ignored:
                     continue
                 temporary = staging.joinpath(*PurePosixPath(relative).parts)
@@ -244,6 +249,14 @@ def import_take(data_dir: Path, source: Path, expected_session_id: UUID, expecte
                 if not target.exists():
                     target.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(temporary, target)
+                    parent = target.parent
+                    while parent.is_relative_to(destination):
+                        descriptor = os.open(parent, os.O_RDONLY)
+                        try:
+                            os.fsync(descriptor)
+                        finally:
+                            os.close(descriptor)
+                        parent = parent.parent
                     imported += 1
         finally:
             shutil.rmtree(staging, ignore_errors=True)
