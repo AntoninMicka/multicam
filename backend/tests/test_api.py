@@ -585,3 +585,35 @@ def test_transfer_metadata_from_capture_peer(closed, deleted, paired, status):
         assert set(saved.devices) == {str(own.device_id)}
     else:
         assert remote.session_id not in store._sessions
+
+
+def test_disabled_bundle_transport_cannot_report_success(tmp_path):
+    federation.token = 'x' * 32
+    federation.transfer_enabled = False
+    with pytest.raises(ValueError, match='data nebyla odeslána'):
+        asyncio.run(federation.send_bundle('http://storage', tmp_path / 'absent.zip', 'session', 'take'))
+
+
+def test_forced_bundle_transport_sends_when_automatic_transfers_are_paused(tmp_path, monkeypatch):
+    import urllib.request
+    from io import BytesIO
+    federation.token = 'x' * 32
+    federation.transfer_enabled = False
+    bundle = tmp_path / 'take.zip'
+    bundle.write_bytes(b'portable bundle')
+    sent = []
+
+    def send(request, **kwargs):
+        sent.append(request.data.read())
+        return BytesIO(b'{"verified": true}')
+
+    monkeypatch.setattr(urllib.request, 'urlopen', send)
+    asyncio.run(federation.send_bundle('http://storage', bundle, 'session', 'take', force=True))
+    assert sent == [b'portable bundle']
+
+
+def test_manual_transfer_without_storage_does_not_claim_success():
+    from uuid import uuid4
+    federation.token = 'x' * 32
+    response = asyncio.run(request('POST', f'/api/federation/sessions/{uuid4()}/takes/{uuid4()}/transfer'))
+    assert response.status_code == 409

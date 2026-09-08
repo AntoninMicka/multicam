@@ -247,9 +247,9 @@ class Federation:
         if len(failures) == len(results):
             self.mark_sync_error(failures[0])
 
-    async def send_bundle(self, peer_url: str, path: Path, session_id: str, take_id: str) -> None:
-        if not self.enabled or not self.transfer_enabled:
-            return
+    async def send_bundle(self, peer_url: str, path: Path, session_id: str, take_id: str, *, force: bool = False) -> None:
+        if not self.enabled or not (self.transfer_enabled or force):
+            raise ValueError("Přenos je vypnutý; data nebyla odeslána")
         target = next((p for p in self.target_peers() if p["url"] == peer_url), None)
         if target:
             peer_url = self._working_urls.get(target["backend_id"], peer_url)

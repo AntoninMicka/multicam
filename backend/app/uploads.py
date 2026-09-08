@@ -215,6 +215,22 @@ class UploadService:
         metadata.pop("error", None)
         self._write_metadata(metadata_path, metadata)
 
+    async def verify_legacy_recordings(self, session: Session, backend_id: str) -> None:
+        """Validate completed uploads made before media validation was introduced."""
+        for device in session.devices.values():
+            if device.owner_backend_id not in {None, backend_id}:
+                continue
+            for path in (self._device_dir(session.session_id, device.device_id) / ".uploads").glob("*/upload.json"):
+                metadata = json.loads(path.read_text(encoding="utf-8"))
+                if (not metadata.get("complete") or metadata.get("kind", "recording") != "recording"
+                        or "media_validation" in metadata or not metadata.get("receipt")):
+                    continue
+                try:
+                    await self.complete(session.session_id, device.device_id, UUID(metadata["upload_id"]))
+                except MediaValidationError:
+                    # The failed validation is persisted; continue with other videos.
+                    continue
+
     def capture_verified(self, session_id: UUID, device_id: UUID, capture_id: UUID) -> bool:
         uploads_dir = self._device_dir(session_id, device_id) / ".uploads"
         completed: set[str] = set()

@@ -221,7 +221,10 @@ async def federation_transfer_take(session_id: UUID, take_id: UUID, request: Req
         raise HTTPException(status_code=400, detail="Federace není aktivní")
     count = 0
     errors = []
-    for peer in federation.direct_transfer_peers():
+    peers = federation.direct_transfer_peers()
+    if not peers:
+        raise HTTPException(status_code=409, detail="Není dostupný cílový storage uzel; nic nebylo přeneseno")
+    for peer in peers:
         try:
             await replicate_take_to_peer(session_id, take_id, peer, force=True)
             count += 1
@@ -921,9 +924,14 @@ async def replicate_take_to_peer(session_id: UUID, take_id: UUID, peer: dict, fo
         return
     session = await store.get(session_id)
     if session.state == SessionState.RECORDING:
+        if force:
+            raise ValueError("Relace právě nahrává; přenos lze spustit až po zastavení")
         return
+    await uploads.verify_legacy_recordings(session, discovery.backend_id)
     fingerprint = completed_local_takes(session).get(take_id)
     if not fingerprint:
+        if force:
+            raise ValueError("Klapka nemá ověřené lokální video a telemetrii; nic nebylo přeneseno")
         return
     local_ids = {media.capture_id for media in uploads.list_media(session)
                  if (media.take_id or media.capture_id) == take_id
@@ -940,7 +948,7 @@ async def replicate_take_to_peer(session_id: UUID, take_id: UUID, peer: dict, fo
             "backend_id": discovery.backend_id, "session": session.model_dump(mode="json"),
         })
         await asyncio.to_thread(export_take, uploads.root, session_id, take_id, local_ids, destination)
-        await federation.send_bundle(peer["url"], destination, str(session_id), str(take_id))
+        await federation.send_bundle(peer["url"], destination, str(session_id), str(take_id), force=force)
         if not (federation.transfer_enabled or force):
             return
         receipt.parent.mkdir(parents=True, exist_ok=True)
@@ -959,6 +967,7 @@ async def sync_completed_takes(peer: dict, force: bool = False) -> None:
     for session in await store.list():
         if session.state == SessionState.RECORDING:
             continue
+        await uploads.verify_legacy_recordings(session, discovery.backend_id)
         for take_id in completed_local_takes(session):
             await replicate_take_to_peer(session.session_id, take_id, peer, force)
 

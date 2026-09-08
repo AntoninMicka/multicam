@@ -13,8 +13,8 @@ import httpx
 import pytest
 
 
-@pytest.mark.parametrize("late_storage", [False, True])
-def test_three_peers_storage_handover_and_local_history(tmp_path, webm_bytes, late_storage):
+@pytest.mark.parametrize("late_storage,legacy_uploads", [(False, False), (True, False), (True, True)])
+def test_three_peers_storage_handover_and_local_history(tmp_path, webm_bytes, late_storage, legacy_uploads):
     project = Path(__file__).resolve().parents[2]
     ids = [str(uuid4()) for _ in range(3)]
     ports = []
@@ -61,6 +61,8 @@ def test_three_peers_storage_handover_and_local_history(tmp_path, webm_bytes, la
                    'MULTICAM_FEDERATION_CONFIG': str(config), 'MULTICAM_BACKEND_ID': ids[index],
                    'MULTICAM_PUBLIC_URL': urls[index], 'MULTICAM_DISCOVERY': '0',
                    'MULTICAM_TRANSCODE': '0', 'MULTICAM_REQUIRED_STORAGE_MOUNT': ''}
+            if legacy_uploads and index == 1:
+                env['MULTICAM_FEDERATION_TRANSFER'] = '0'
             if late_storage and index == 2:
                 delayed_storage = (env, log)
                 continue
@@ -88,6 +90,13 @@ def test_three_peers_storage_handover_and_local_history(tmp_path, webm_bytes, la
                                   urls[1], str(fixture), sid, device['device_id'], capture_id, take_id],
                                  cwd=project / 'frontend', capture_output=True, text=True, timeout=30)
         assert browser.returncode == 0, browser.stdout + browser.stderr
+        if legacy_uploads:
+            for metadata_path in (roots[1] / 'sessions' / sid).glob('devices/*/.uploads/*/upload.json'):
+                metadata = json.loads(metadata_path.read_text())
+                metadata.pop('media_validation', None)
+                metadata_path.write_text(json.dumps(metadata))
+            response = client.patch(urls[1] + '/api/federation/config', json={'transfer_enabled': True})
+            assert response.is_success, response.text
         storage_video = roots[2] / 'sessions' / sid / 'devices' / device['device_id'] / 'recordings' / f'{capture_id}.webm'
         if late_storage:
             post(0, f'/api/sessions/{sid}/close')
