@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import {
   deleteServerCapture,
   deleteServerTake,
+  forceTransferTake,
   listSessionMedia,
   listSessions,
   type CaptureMedia,
@@ -82,6 +83,18 @@ async function removeGroup(group: (typeof groups.value)[number]): Promise<void> 
   }
 }
 
+async function transferGroup(group: (typeof groups.value)[number]): Promise<void> {
+  deleting.value = true
+  try {
+    const result = await forceTransferTake(group.sessionId, group.takeId)
+    window.alert(`Přenos na centrální úložiště dokončen. Synchronizováno s ${result.synced_peers} uzly.`)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'Klapku nelze přenést.'
+  } finally {
+    deleting.value = false
+  }
+}
+
 onMounted(loadArchive)
 </script>
 
@@ -101,7 +114,10 @@ onMounted(loadArchive)
       <section v-for="group in groups" :key="`${group.sessionId}:${group.takeId}`" class="archive-group">
         <header>
           <div><strong>{{ group.sessionName }}</strong><small>Klapka {{ group.captures[0]?.created_at ? new Date(group.captures[0].created_at).toLocaleString() : group.takeId.slice(0, 8) }}</small></div>
-          <button class="small danger" :disabled="deleting" @click="removeGroup(group)">Smazat celou klapku</button>
+          <div class="header-actions">
+            <button class="small" :disabled="deleting" @click="transferGroup(group)">Přenést do centrálního úložiště</button>
+            <button class="small danger" :disabled="deleting" @click="removeGroup(group)">Smazat celou klapku</button>
+          </div>
         </header>
         <CaptureGroup :captures="group.captures" :session-id="group.sessionId" />
         <div class="capture-actions">
@@ -122,6 +138,7 @@ onMounted(loadArchive)
 .archive-group { padding: 16px; border: 1px solid #405170; border-radius: 18px; background: #111b2d; }
 .archive-group > header { margin-bottom: 14px; }
 .archive-group > header div { display: grid; gap: 4px; }
+.header-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
 .capture-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 small { color: #8391a7; }
 @media (max-width: 520px) { .archive-group > header { align-items: stretch; flex-direction: column; } }

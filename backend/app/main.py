@@ -214,6 +214,24 @@ async def federation_transfers_sync(request: Request) -> dict:
     return {"status": "ok", "synced_peers": count}
 
 
+@app.post("/api/federation/sessions/{session_id}/takes/{take_id}/transfer")
+async def federation_transfer_take(session_id: UUID, take_id: UUID, request: Request) -> dict:
+    require_local_operator(request)
+    if not federation.enabled:
+        raise HTTPException(status_code=400, detail="Federace není aktivní")
+    count = 0
+    errors = []
+    for peer in federation.direct_transfer_peers():
+        try:
+            await replicate_take_to_peer(session_id, take_id, peer, force=True)
+            count += 1
+        except Exception as error:
+            errors.append(str(error))
+    if errors:
+        raise HTTPException(status_code=500, detail=f"Přenos klapky selhal: {', '.join(errors)}")
+    return {"status": "ok", "synced_peers": count}
+
+
 @app.patch("/api/federation/config")
 async def update_federation_config(request: Request) -> dict:
     require_local_operator(request)
