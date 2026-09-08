@@ -325,8 +325,9 @@ export function sessionSocket(sessionId: string, deviceId?: string): WebSocket {
   return new WebSocket(`${protocol}://${location.host}/api/ws/${sessionId}${query}`)
 }
 
-async function sha256(data: Blob): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', await data.arrayBuffer())
+async function sha256(data: Blob | ArrayBuffer): Promise<string> {
+  const buffer = data instanceof Blob ? await data.arrayBuffer() : data
+  const digest = await crypto.subtle.digest('SHA-256', buffer)
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
@@ -380,12 +381,13 @@ export async function uploadArtifact(
   onProgress(Math.round(completedChunks / totalChunks * 100))
   for (let index = 0; index < totalChunks; index += 1) {
     if (received.has(index)) continue
-    const chunk = artifact.slice(index * chunkSize, Math.min((index + 1) * chunkSize, artifact.size))
-    const chunkHash = await sha256(chunk)
+    const chunkBlob = artifact.slice(index * chunkSize, Math.min((index + 1) * chunkSize, artifact.size))
+    const chunkBuffer = await chunkBlob.arrayBuffer()
+    const chunkHash = await sha256(chunkBuffer)
     await retry(() => fetch(`${base}/${upload.upload_id}/chunks/${index}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/octet-stream', 'X-Chunk-SHA256': chunkHash },
-      body: chunk,
+      body: chunkBuffer,
     }).then(json<UploadStatus>))
     completedChunks += 1
     onProgress(Math.round(completedChunks / totalChunks * 100))
