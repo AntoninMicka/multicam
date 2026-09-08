@@ -82,6 +82,10 @@ export function setFederationTransfer(transferEnabled: boolean): Promise<Federat
   }).then(json<FederationConfig>)
 }
 
+export function forceFederationSync(): Promise<{ status: string; synced_peers: number }> {
+  return fetch('/api/federation/transfers/sync', { method: 'POST' }).then(json<{ status: string; synced_peers: number }>)
+}
+
 export function setFederationRoles(directorBackendId: string, storageBackendId: string): Promise<FederationConfig> {
   return fetch('/api/federation/roles', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

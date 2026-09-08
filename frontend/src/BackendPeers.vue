@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { createPairingOffer, getBackends, getFederationConfig, getFederationTransfers, joinPairingOffer, pingBackends, setFederationRoles, setFederationTransfer, type BackendInfo, type BackendPingResult } from './api'
+import { createPairingOffer, getBackends, getFederationConfig, getFederationTransfers, joinPairingOffer, pingBackends, setFederationRoles, setFederationTransfer, forceFederationSync, type BackendInfo, type BackendPingResult } from './api'
 
 const emit = defineEmits<{ (event: 'join-session', sessionId: string): void; (event: 'director-changed', isDirector: boolean): void }>()
 
@@ -102,6 +102,20 @@ async function toggleTransfer() {
   }
 }
 
+const syncBusy = ref(false)
+async function runForceSync() {
+  syncBusy.value = true
+  try {
+    const result = await forceFederationSync()
+    pairingMessage.value = `Synchronizace dokončena (odesláno na ${result.synced_peers} uzlů).`
+    await refresh()
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'Synchronizace selhala.'
+  } finally {
+    syncBusy.value = false
+  }
+}
+
 async function saveRoles() {
   rolesBusy.value = true
   try {
@@ -140,7 +154,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
       <div class="pairing-actions">
         <button class="small" @click="createOffer">Vytvořit krátký kód</button>
         <button v-if="federationEnabled" class="small secondary" @click="toggleTransfer">{{ transferEnabled ? 'Odložit páteřní přenosy' : `Spustit odložené přenosy (${pendingTransfers})` }}</button>
-
+        <button v-if="federationEnabled" class="small secondary" :disabled="syncBusy || !pendingTransfers" @click="runForceSync">{{ syncBusy ? 'Odesílám…' : 'Odeslat chybějící jednorázově' }}</button>
       </div>
       <p v-if="pairingCode" class="pairing-code"><small>Párovací kód</small><strong>{{ pairingCode.slice(0, 5) }}-{{ pairingCode.slice(5) }}</strong></p>
       <label v-if="pairingUri">Párovací odkaz pro připojení bez discovery<input :value="pairingUri" readonly /></label>
