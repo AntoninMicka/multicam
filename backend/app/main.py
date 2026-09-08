@@ -191,6 +191,7 @@ async def federation_transfers() -> dict:
                     pending.append({"session_id": str(session.session_id), "take_id": str(take_id),
                                     "peer_backend_id": peer["backend_id"]})
     return {"pending_count": len(pending), "pending": pending,
+            "active": active_transfers, "active_count": len(active_transfers),
             "deferred": not federation.transfer_enabled, "direction": "to_storage",
             "storage_backend_id": federation.storage_backend_id}
 
@@ -846,6 +847,9 @@ async def complete_upload(session_id: UUID, device_id: UUID, upload_id: UUID) ->
     return receipt
 
 
+active_transfers: list[dict] = []
+
+
 def completed_local_takes(session: Session) -> dict[UUID, str]:
     captures: dict[UUID, list[str]] = {}
     for media in uploads.list_media(session):
@@ -888,10 +892,16 @@ async def replicate_take_to_peer(session_id: UUID, take_id: UUID, peer: dict, fo
     if transfer_is_current(receipt, fingerprint):
         return
     destination = uploads.root / ".federation" / f"{session_id}-{take_id}-{discovery.backend_id}.zip"
+    transfer_info = {"session_id": str(session_id), "take_id": str(take_id), "peer_backend_id": peer["backend_id"], "started_at": datetime.now(timezone.utc).isoformat()}
+    active_transfers.append(transfer_info)
     try:
         # PUSH session metadata to storage before sending the data bundle
         # Storage uzel totiž odmítne importovat ZIP, pokud u sebe nemá založenou relaci (session.json)
-        await federation.post_json(peer["url"], "/api/federation/session-state", await federation_snapshot(federation.token))
+        try:
+            await federation.post_json(peer["url"], "/api/federation/session-state", await federation_snapshot(federation.token))
+        except urllib.error.HTTPError as error:
+            if error.code != 409:
+                raise
         
         await asyncio.to_thread(export_take, uploads.root, session_id, take_id, local_ids, destination)
         await federation.send_bundle(peer["url"], destination, str(session_id), str(take_id))
@@ -903,6 +913,7 @@ async def replicate_take_to_peer(session_id: UUID, take_id: UUID, peer: dict, fo
                                         "fingerprint": fingerprint, "sent_at": datetime.now(timezone.utc).isoformat()}))
         os.replace(temporary, receipt)
     finally:
+        active_transfers.remove(transfer_info)
         destination.unlink(missing_ok=True)
 
 

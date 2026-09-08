@@ -21,6 +21,7 @@ const pairedPeers = ref<BackendInfo[]>([])
 const rolesBusy = ref(false)
 const pairingUri = ref('')
 const pendingTransfers = ref(0)
+const activeTransfers = ref(0)
 const discoveryDetail = ref('')
 const pingResults = ref<BackendPingResult[]>([])
 const pingBusy = ref(false)
@@ -51,7 +52,9 @@ async function refresh() {
       directorId.value = config.director_backend_id
       storageId.value = config.storage_backend_id
     }
-    pendingTransfers.value = (await getFederationTransfers()).pending_count
+    const transfers = await getFederationTransfers()
+    pendingTransfers.value = transfers.pending_count
+    activeTransfers.value = transfers.active_count
     error.value = ''
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Discovery backendů není dostupné.'
@@ -138,7 +141,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
 
 <template>
   <div class="backend-peers">
-    <div><strong>Backend: {{ own?.name ?? 'načítám…' }}</strong><small v-if="own">{{ own.url }}</small><small v-if="federationEnabled">Rovnocenný uzel · {{ isDirector ? 'director' : 'řízení na jiném uzlu' }} · páteřní přenos {{ transferEnabled ? 'povolený' : 'odložený' }} · ve frontě {{ pendingTransfers }}</small><small v-else>Jen discovery · federace není nakonfigurovaná</small><small v-if="lastSyncAt">Poslední synchronizace: {{ new Date(lastSyncAt).toLocaleTimeString() }}</small><small v-if="syncError" class="sync-error">Synchronizace selhala: {{ syncError }}</small></div>
+    <div><strong>Backend: {{ own?.name ?? 'načítám…' }}</strong><small v-if="own">{{ own.url }}</small><small v-if="federationEnabled">Rovnocenný uzel · {{ isDirector ? 'director' : 'řízení na jiném uzlu' }} · páteřní přenos {{ transferEnabled ? 'povolený' : 'odložený' }} · ve frontě {{ pendingTransfers }} (aktivní: {{ activeTransfers }})</small><small v-else>Jen discovery · federace není nakonfigurovaná</small><small v-if="lastSyncAt">Poslední synchronizace: {{ new Date(lastSyncAt).toLocaleTimeString() }}</small><small v-if="syncError" class="sync-error">Synchronizace selhala: {{ syncError }}</small></div>
     <span v-if="error" class="muted">{{ error }}</span>
     <span v-else-if="!peers.length" class="muted">{{ discoveryDetail || 'Další pult nenalezen' }}</span>
     <button class="small secondary" :disabled="pingBusy" @click="runApplicationPing">{{ pingBusy ? 'Testuji…' : 'Aplikační ping' }}</button>

@@ -99,6 +99,7 @@ export function closeSession(id: string): Promise<Session> {
 
 export interface FederationTransferStatus {
   pending_count: number
+  active_count: number
   deferred: boolean
   direction: 'to_storage'
   storage_backend_id: string
