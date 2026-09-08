@@ -552,3 +552,36 @@ def test_ffprobe_rejects_wrong_container_audio_only_and_unavailable_probe(tmp_pa
     monkeypatch.setattr(subprocess, 'run', unavailable)
     with pytest.raises(MediaValidationError, match='FFprobe'):
         validate_media(source, 'video/webm')
+
+
+@pytest.mark.parametrize('closed,deleted,paired,status', [
+    (True, False, True, 200),
+    (False, False, True, 409),
+    (True, True, True, 410),
+    (True, False, False, 403),
+])
+def test_transfer_metadata_from_capture_peer(closed, deleted, paired, status):
+    from uuid import uuid4
+    from app.models import Session, Device, DeviceRole
+
+    source, director = str(uuid4()), str(uuid4())
+    own = Device(name='Capture', role=DeviceRole.MAIN_CAMERA, owner_backend_id=source)
+    foreign = Device(name='Foreign', role=DeviceRole.MAIN_CAMERA, owner_backend_id=director)
+    remote = Session(name='Offline history', state=SessionState.CLOSED if closed else SessionState.STOPPED,
+                     devices={str(own.device_id): own, str(foreign.device_id): foreign})
+    federation.token = 'x' * 32
+    federation.director_backend_id = director
+    federation.peers = {director: 'http://director', **({source: 'http://capture'} if paired else {})}
+    if deleted:
+        deleted_session_ids.add(remote.session_id)
+    response = asyncio.run(request('POST', '/api/federation/transfer-session',
+                                  headers={'X-MultiCam-Federation': federation.token},
+                                  json={'backend_id': source, 'session': remote.model_dump(mode='json')}))
+    assert response.status_code == status
+    assert store.active_session_id is None
+    if status == 200:
+        saved = asyncio.run(store.get(remote.session_id))
+        assert saved.state == SessionState.CLOSED
+        assert set(saved.devices) == {str(own.device_id)}
+    else:
+        assert remote.session_id not in store._sessions

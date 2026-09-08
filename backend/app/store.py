@@ -178,13 +178,13 @@ class SessionStore:
 
     async def merge_remote(
         self, remote: Session, remote_backend_id: str, local_backend_id: str,
-        *, authoritative: bool = False,
+        *, authoritative: bool = False, allow_closed_import: bool = False,
     ) -> Session:
         """Merge only the devices owned by a remote backend into a shared session."""
         async with self._lock:
             session = self._sessions.get(remote.session_id)
             if session is None:
-                if not authoritative:
+                if not authoritative and not (allow_closed_import and remote.state == SessionState.CLOSED):
                     raise SessionNotFoundError(remote.session_id)
                 session = remote.model_copy(deep=True)
                 session.devices = {}

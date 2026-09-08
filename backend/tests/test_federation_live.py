@@ -10,9 +10,11 @@ import time
 from uuid import uuid4
 
 import httpx
+import pytest
 
 
-def test_three_peers_storage_handover_and_local_history(tmp_path, webm_bytes):
+@pytest.mark.parametrize("late_storage", [False, True])
+def test_three_peers_storage_handover_and_local_history(tmp_path, webm_bytes, late_storage):
     project = Path(__file__).resolve().parents[2]
     ids = [str(uuid4()) for _ in range(3)]
     ports = []
@@ -59,18 +61,21 @@ def test_three_peers_storage_handover_and_local_history(tmp_path, webm_bytes):
                    'MULTICAM_FEDERATION_CONFIG': str(config), 'MULTICAM_BACKEND_ID': ids[index],
                    'MULTICAM_PUBLIC_URL': urls[index], 'MULTICAM_DISCOVERY': '0',
                    'MULTICAM_TRANSCODE': '0', 'MULTICAM_REQUIRED_STORAGE_MOUNT': ''}
+            if late_storage and index == 2:
+                delayed_storage = (env, log)
+                continue
             processes.append(subprocess.Popen([sys.executable, '-m', 'uvicorn', 'backend.app.main:app',
                                                 '--host', '127.0.0.1', '--port', str(ports[index]),
                                                 '--loop', 'asyncio'], cwd=project, env=env, stdout=log, stderr=log))
-        for url in urls:
+        for url in (urls[:2] if late_storage else urls):
             wait_for(lambda: client.get(url + '/api/health').is_success)
         session = post(0, '/api/sessions', {'name': 'Distributed'})
         sid = session['session_id']
-        for url in urls:
+        for url in (urls[:2] if late_storage else urls):
             wait_for(lambda: client.get(url + '/api/sessions/current').json().get('session_id') == sid)
         for kind in ['control.arm', 'recording.start', 'recording.stop']:
             post(0, '/api/federation/control-request', {'session_id': sid, 'message': {'type': kind, 'payload': {'command_id': str(uuid4())}}}, headers=headers)
-        for url in urls:
+        for url in (urls[:2] if late_storage else urls):
             wait_for(lambda: client.get(url + '/api/sessions/current').json().get('state') == 'stopped')
         # A camera belongs to the capture peer while the final storage is a third peer.
         device = post(1, f'/api/sessions/{sid}/devices', {'name': 'Remote camera', 'role': 'main_camera'})
@@ -84,12 +89,25 @@ def test_three_peers_storage_handover_and_local_history(tmp_path, webm_bytes):
                                  cwd=project / 'frontend', capture_output=True, text=True, timeout=30)
         assert browser.returncode == 0, browser.stdout + browser.stderr
         storage_video = roots[2] / 'sessions' / sid / 'devices' / device['device_id'] / 'recordings' / f'{capture_id}.webm'
+        if late_storage:
+            post(0, f'/api/sessions/{sid}/close')
+            wait_for(lambda: client.get(urls[1] + f'/api/sessions/{sid}').json()['state'] == 'closed')
+            assert client.delete(urls[0] + f'/api/sessions/{sid}').is_success
+            env, log = delayed_storage
+            processes.append(subprocess.Popen(
+                [sys.executable, '-m', 'uvicorn', 'backend.app.main:app', '--host', '127.0.0.1',
+                 '--port', str(ports[2]), '--loop', 'asyncio'], cwd=project, env=env, stdout=log, stderr=log))
         wait_for(storage_video.exists)
         assert storage_video.read_bytes() == webm_bytes
         wait_for(lambda: client.get(urls[1] + '/api/federation/transfers').json()['pending_count'] == 0)
         assert not (roots[0] / 'sessions' / sid / 'devices' / device['device_id'] / 'recordings').exists()
+        if late_storage:
+            assert client.get(urls[2] + '/api/sessions/current').status_code == 404
+            media = client.get(urls[2] + f'/api/sessions/{sid}/media').json()
+            assert any(item['capture_id'] == capture_id for item in media)
+            return
         post(0, f'/api/sessions/{sid}/close')
-        for url in urls:
+        for url in (urls[:2] if late_storage else urls):
             wait_for(lambda: client.get(url + '/api/sessions/current').status_code == 404)
             assert client.post(url + f'/api/sessions/{sid}/activate').status_code == 409
         assert client.delete(urls[1] + f'/api/sessions/{sid}').is_success
@@ -101,7 +119,7 @@ def test_three_peers_storage_handover_and_local_history(tmp_path, webm_bytes):
         wait_for(lambda: client.get(urls[1] + '/api/federation/config').json()['is_director'])
         assert not client.get(urls[0] + '/api/federation/config').json()['is_director']
         next_session = post(1, '/api/sessions', {'name': 'Next'})
-        for url in urls:
+        for url in (urls[:2] if late_storage else urls):
             wait_for(lambda: client.get(url + '/api/sessions/current').json().get('session_id') == next_session['session_id'])
     finally:
         client.close()

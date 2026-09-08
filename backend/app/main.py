@@ -465,6 +465,29 @@ async def federation_event(request: Request, x_multicam_federation: str | None =
     return {"accepted": True}
 
 
+@app.post("/api/federation/transfer-session")
+async def federation_transfer_session(request: Request, x_multicam_federation: str | None = Header(default=None)) -> dict:
+    require_federation_token(x_multicam_federation)
+    if not federation.is_storage:
+        raise HTTPException(status_code=403, detail="Tento backend není storage")
+    data = await request.json()
+    source = data["backend_id"]
+    if source not in federation.peers:
+        raise HTTPException(status_code=403, detail="Zdrojový backend není spárovaný")
+    remote = Session.model_validate(data["session"])
+    if remote.session_id in deleted_session_ids:
+        raise HTTPException(status_code=410, detail="Relace byla lokálně smazána")
+    try:
+        # Closed history may outlive the director's local copy. Import only
+        # source-owned devices and never activate a session from a capture peer.
+        await store.merge_remote(remote, source, discovery.backend_id,
+                                 authoritative=source == federation.director_backend_id,
+                                 allow_closed_import=True)
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=409, detail="Relace zatím není synchronizována z directora") from error
+    return {"accepted": True}
+
+
 @app.post("/api/federation/take")
 async def federation_take(
     request: Request,
@@ -913,14 +936,9 @@ async def replicate_take_to_peer(session_id: UUID, take_id: UUID, peer: dict, fo
     transfer_info = {"session_id": str(session_id), "take_id": str(take_id), "peer_backend_id": peer["backend_id"], "started_at": datetime.now(timezone.utc).isoformat()}
     active_transfers.append(transfer_info)
     try:
-        # PUSH session metadata to storage before sending the data bundle
-        # Storage uzel totiž odmítne importovat ZIP, pokud u sebe nemá založenou relaci (session.json)
-        try:
-            await federation.post_json(peer["url"], "/api/federation/session-state", await federation_snapshot(federation.token))
-        except urllib.error.HTTPError as error:
-            if error.code != 409:
-                raise
-        
+        await federation.post_json(peer["url"], "/api/federation/transfer-session", {
+            "backend_id": discovery.backend_id, "session": session.model_dump(mode="json"),
+        })
         await asyncio.to_thread(export_take, uploads.root, session_id, take_id, local_ids, destination)
         await federation.send_bundle(peer["url"], destination, str(session_id), str(take_id))
         if not (federation.transfer_enabled or force):
@@ -1356,4 +1374,3 @@ async def run_clap_sequence(session_id: UUID, automatic: bool) -> None:
 frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if frontend_dist.is_dir():
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
-
